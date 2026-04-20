@@ -1,0 +1,655 @@
+import { useState, useCallback, useEffect, useRef } from "react";
+
+/* ═══ THEME ═══ */
+const PC = ["#d4a017","#c43040","#1a8faa","#6c4dcf","#04a87e","#d4622b","#8b5cf6","#0891b2","#be185d","#65a30d"];
+const T = {
+  bg:"#f4f3f0",surface:"#ffffff",surfaceAlt:"#fafaf8",
+  border:"#e6e4df",borderLight:"#eeece8",
+  text:"#1c1917",textSoft:"#78716c",textMuted:"#a8a29e",
+  danger:"#dc2626",success:"#04a87e",
+  radius:16,radiusSm:10,
+  font:"'Outfit','Segoe UI',-apple-system,BlinkMacSystemFont,sans-serif",
+  fontMono:"'JetBrains Mono','SF Mono',monospace",
+};
+const FL="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap";
+function injectFont(){if(!document.querySelector(`link[href*="Outfit"]`)){const l=document.createElement("link");l.rel="stylesheet";l.href=FL;document.head.appendChild(l);}}
+
+/* ═══ HELPERS ═══ */
+function loadGames(){try{const s=localStorage.getItem("qb_games");if(s)return JSON.parse(s)}catch(e){}return[]}
+function saveGames(g){try{localStorage.setItem("qb_games",JSON.stringify(g))}catch(e){}}
+function shuffle(a){const b=[...a];for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]]}return b}
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+function ytId(u){if(!u)return null;const m=u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/);return m?m[1]:null}
+
+const DG={name:"Untitled Game",columns:5,rows:5,timerSeconds:0,
+  categories:PC.slice(0,5).map((c,i)=>({name:`Category ${i+1}`,color:c})),boxes:[]};
+
+/* ═══ RICH TEXT ═══
+   We store HTML strings. The editor uses contentEditable divs.
+   Play mode renders via dangerouslySetInnerHTML.
+*/
+function RichInput({value,onChange,placeholder,style={}}){
+  const ref=useRef(null);
+  const isLocal=useRef(false);
+  // Only set innerHTML on mount or when value changes from outside (not from our own typing)
+  useEffect(()=>{
+    if(isLocal.current){isLocal.current=false;return}
+    if(ref.current&&ref.current.innerHTML!==value){
+      ref.current.innerHTML=value||"";
+    }
+  },[value]);
+  const handleInput=()=>{
+    isLocal.current=true;
+    onChange(ref.current?.innerHTML||"");
+  };
+  const isEmpty=!value||value===""||value==="<br>";
+  return(
+    <div style={{position:"relative"}}>
+      {isEmpty&&<div style={{position:"absolute",top:0,left:0,color:T.textMuted,pointerEvents:"none",padding:style.padding||"10px 12px",fontSize:style.fontSize||13}}>{placeholder}</div>}
+      <div ref={ref} contentEditable suppressContentEditableWarning
+        onInput={handleInput}
+        style={{
+          border:`1.5px solid ${T.borderLight}`,borderRadius:8,fontSize:13,outline:"none",
+          fontFamily:T.font,color:T.text,background:T.surfaceAlt,
+          minHeight:60,maxHeight:200,overflowY:"auto",padding:"10px 12px",lineHeight:1.5,
+          ...style,
+        }}
+      />
+    </div>
+  );
+}
+
+function FormatBar({targetRef}){
+  const exec=(cmd,val)=>{document.execCommand(cmd,false,val);targetRef?.current?.focus()};
+  const bs={background:"none",border:`1px solid ${T.borderLight}`,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:13,fontFamily:T.font,color:T.textSoft,lineHeight:1,marginRight:3};
+  return(
+    <div style={{display:"flex",gap:2,marginBottom:4,flexWrap:"wrap"}}>
+      <button style={{...bs,fontWeight:700}} onClick={()=>exec("bold")} title="Bold">B</button>
+      <button style={{...bs,fontStyle:"italic"}} onClick={()=>exec("italic")} title="Italic">I</button>
+      <button style={{...bs,textDecoration:"underline"}} onClick={()=>exec("underline")} title="Underline">U</button>
+      <button style={{...bs}} onClick={()=>exec("strikeThrough")} title="Strikethrough">S̶</button>
+    </div>
+  );
+}
+
+function ImageUpload({value,onChange,label,color,borderColor}){
+  const fileRef=useRef(null);
+  const[compressing,setCompressing]=useState(false);
+  const isBase64=value&&value.startsWith("data:");
+
+  const compressImage=(file)=>{
+    return new Promise((resolve)=>{
+      const img=new Image();
+      const url=URL.createObjectURL(file);
+      img.onload=()=>{
+        URL.revokeObjectURL(url);
+        const MAX=1920;
+        let w=img.width,h=img.height;
+        if(w>MAX||h>MAX){
+          if(w>h){h=Math.round(h*(MAX/w));w=MAX}
+          else{w=Math.round(w*(MAX/h));h=MAX}
+        }
+        const canvas=document.createElement("canvas");
+        canvas.width=w;canvas.height=h;
+        const ctx=canvas.getContext("2d");
+        ctx.drawImage(img,0,0,w,h);
+        // Try JPEG first, fall back to PNG for transparency
+        let result=canvas.toDataURL("image/jpeg",0.82);
+        if(file.type==="image/png"){
+          const pngResult=canvas.toDataURL("image/png");
+          // Use PNG only if it's smaller (rare) or if transparency matters
+          if(pngResult.length<result.length)result=pngResult;
+        }
+        resolve(result);
+      };
+      img.onerror=()=>{
+        URL.revokeObjectURL(url);
+        // Fallback: read as-is
+        const r=new FileReader();r.onload=ev=>resolve(ev.target.result);r.readAsDataURL(file);
+      };
+      img.src=url;
+    });
+  };
+
+  const handleFile=async(e)=>{
+    const file=e.target.files?.[0];if(!file)return;
+    e.target.value="";
+    setCompressing(true);
+    try{
+      const compressed=await compressImage(file);
+      onChange(compressed);
+    }catch(err){
+      alert("Failed to process image: "+err.message);
+    }
+    setCompressing(false);
+  };
+
+  const sizeKB=isBase64?Math.round(value.length*0.75/1024):0;
+
+  return(
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+        <span style={{fontSize:10,fontWeight:700,color:color||"#1a8faa",textTransform:"uppercase",letterSpacing:1}}>{label||"🖼 Image"}</span>
+        <div style={{flex:1}}/>
+        {isBase64&&<span style={{fontSize:10,color:T.success,fontWeight:600}}>✓ Embedded ({sizeKB>1024?(sizeKB/1024).toFixed(1)+"MB":sizeKB+"KB"})</span>}
+        {compressing&&<span style={{fontSize:10,color:"#1a8faa",fontWeight:600}}>Compressing…</span>}
+        {value&&<button onClick={()=>onChange("")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font,fontWeight:600}}>Remove</button>}
+      </div>
+      <div style={{display:"flex",gap:6}}>
+        <input value={isBase64?"(embedded image)":value||""} onChange={e=>onChange(e.target.value)} readOnly={isBase64}
+          placeholder="Paste URL or upload file →" style={{flex:1,padding:"8px 12px",border:`1.5px solid ${borderColor||T.borderLight}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:T.font,color:isBase64?T.textMuted:T.text,background:T.surfaceAlt}}/>
+        <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}} onChange={handleFile}/>
+        <button onClick={()=>fileRef.current?.click()} disabled={compressing} style={{padding:"6px 12px",border:`1.5px solid ${borderColor||T.borderLight}`,borderRadius:8,fontSize:12,fontWeight:600,cursor:compressing?"wait":"pointer",background:T.surface,color:T.textSoft,fontFamily:T.font,whiteSpace:"nowrap",flexShrink:0}}>{compressing?"…":"Upload"}</button>
+      </div>
+      {value&&<div style={{marginTop:6}}><img src={value} alt="" style={{maxWidth:"100%",maxHeight:100,borderRadius:8,objectFit:"contain",border:`1px solid ${T.borderLight}`}} onError={e=>{e.target.style.display="none"}}/></div>}
+    </div>
+  );
+}
+
+/* ═══ BTN ═══ */
+function Btn({children,onClick,variant="default",style={},...props}){
+  const base={fontFamily:T.font,fontWeight:600,fontSize:14,cursor:"pointer",borderRadius:50,transition:"all 0.15s",display:"inline-flex",alignItems:"center",gap:6,whiteSpace:"nowrap",border:"none",padding:"10px 22px",lineHeight:1};
+  const v={default:{background:T.surface,color:T.text,border:`1.5px solid ${T.border}`},primary:{background:T.text,color:"#fff"},danger:{background:"transparent",color:T.danger,border:`1.5px solid ${T.danger}33`},ghost:{background:"transparent",color:T.textSoft,padding:"8px 14px"},success:{background:T.success,color:"#fff"}};
+  return <button onClick={onClick} style={{...base,...v[variant],...style}} {...props}>{children}</button>;
+}
+
+/* ═══ MEDIA ═══ */
+function MediaPreview({imageUrl,videoUrl,answerImageUrl,showAnswerImg,maxHeight="40vh"}){
+  const yt=ytId(videoUrl);
+  const hasMedia=imageUrl||yt||(showAnswerImg&&answerImageUrl);
+  if(!hasMedia)return null;
+  return(
+    <div style={{marginTop:"2vh",display:"flex",flexDirection:"column",alignItems:"center",gap:"2vh"}}>
+      {imageUrl&&<img src={imageUrl} alt="" style={{maxWidth:"100%",maxHeight,borderRadius:12,objectFit:"contain",border:`1px solid ${T.borderLight}`}} onError={e=>{e.target.style.display="none"}}/>}
+      {yt&&<div style={{width:"100%",maxWidth:640,aspectRatio:"16/9",borderRadius:12,overflow:"hidden",border:`1px solid ${T.borderLight}`}}><iframe src={`https://www.youtube.com/embed/${yt}`} title="Video" style={{width:"100%",height:"100%",border:"none"}} allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowFullScreen/></div>}
+      {showAnswerImg&&answerImageUrl&&<img src={answerImageUrl} alt="" style={{maxWidth:"100%",maxHeight,borderRadius:12,objectFit:"contain",border:`1px solid ${T.success}44`}} onError={e=>{e.target.style.display="none"}}/>}
+    </div>
+  );
+}
+
+/* ═══ TIMER ═══ */
+function Timer({seconds}){
+  const[left,setLeft]=useState(seconds);const ref=useRef(null);
+  useEffect(()=>{if(seconds<=0)return;setLeft(seconds);ref.current=setInterval(()=>setLeft(p=>{if(p<=1){clearInterval(ref.current);return 0}return p-1}),1000);return()=>clearInterval(ref.current)},[seconds]);
+  if(seconds<=0)return null;const pct=left/seconds;const color=pct>.3?T.text:T.danger;
+  return(<div style={{display:"flex",alignItems:"center",gap:12,marginTop:"2vh"}}><div style={{flex:1,height:6,background:T.borderLight,borderRadius:3,overflow:"hidden"}}><div style={{width:`${pct*100}%`,height:"100%",background:color,borderRadius:3,transition:"width 1s linear,background .3s"}}/></div><span style={{fontFamily:T.fontMono,fontWeight:700,fontSize:"clamp(1rem,2.5vh,1.6rem)",color,minWidth:50,textAlign:"right"}}>{Math.floor(left/60)}:{String(left%60).padStart(2,"0")}</span></div>);
+}
+
+/* ═══ AUTO-FIT TEXT ═══
+   Shrinks text until it fits within parent without scrolling.
+   Uses a ref to measure and binary-search the right font size.
+*/
+function AutoFitText({html,baseSizePx=80,minSizePx=14,style={}}){
+  const outerRef=useRef(null);const innerRef=useRef(null);const[fs,setFs]=useState(baseSizePx);
+  useEffect(()=>{
+    if(!outerRef.current||!innerRef.current)return;
+    let lo=minSizePx,hi=baseSizePx,best=minSizePx;
+    const el=innerRef.current;const ct=outerRef.current;
+    for(let i=0;i<25;i++){
+      const mid=Math.floor((lo+hi)/2);el.style.fontSize=mid+"px";
+      if(el.scrollHeight<=ct.clientHeight&&el.scrollWidth<=ct.clientWidth){best=mid;lo=mid+1}else{hi=mid-1}
+    }
+    setFs(best);
+  },[html,baseSizePx]);
+  return(
+    <div ref={outerRef} style={{width:"100%",overflow:"hidden",...style}}>
+      <div ref={innerRef} style={{fontSize:fs,lineHeight:1.3,color:T.text,fontWeight:700,letterSpacing:-.5,fontFamily:T.font,wordBreak:"break-word"}} dangerouslySetInnerHTML={{__html:html}}/>
+    </div>
+  );
+}
+function Scoreboard({scores,setScores,pointStep}){
+  const[newName,setNewName]=useState("");const step=pointStep||100;const half=Math.round(step/2);
+  const add=()=>{if(newName.trim()){setScores(p=>[...p,{name:newName.trim(),score:0}]);setNewName("")}};
+  const upd=(i,d)=>setScores(p=>p.map((s,j)=>j===i?{...s,score:s.score+d}:s));
+  const rm=i=>setScores(p=>p.filter((_,j)=>j!==i));
+  return(<div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"10px 14px",flexShrink:0}}>
+    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}><span style={{fontWeight:700,fontSize:12,color:T.textSoft,textTransform:"uppercase",letterSpacing:1}}>Scores</span><div style={{flex:1}}/><input value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Add player/team" style={{padding:"5px 10px",border:`1.5px solid ${T.borderLight}`,borderRadius:8,fontSize:12,outline:"none",fontFamily:T.font,width:140,background:T.surfaceAlt}}/><Btn variant="ghost" onClick={add} style={{fontSize:11,padding:"5px 10px"}}>+</Btn></div>
+    {scores.length>0&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>{[...scores].sort((a,b)=>b.score-a.score).map((s,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:4,background:T.bg,borderRadius:8,padding:"4px 8px",fontSize:13}}><span style={{fontWeight:700}}>{s.name}</span><span style={{fontFamily:T.fontMono,fontWeight:800,fontSize:15,minWidth:28,textAlign:"center"}}>{s.score}</span><button onClick={()=>upd(i,-step)} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:T.danger,padding:"0 1px",lineHeight:1}} title={`−${step}`}>−</button><button onClick={()=>upd(i,half)} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:T.textMuted,padding:"0 1px",lineHeight:1,fontWeight:700}} title={`+${half}`}>+½</button><button onClick={()=>upd(i,step)} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,color:T.success,padding:"0 1px",lineHeight:1}} title={`+${step}`}>+</button><button onClick={()=>rm(i)} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,color:T.textMuted,padding:"0 1px",lineHeight:1}}>×</button></div>))}</div>}
+  </div>);
+}
+
+/* ═══ SETTINGS DROPDOWN ═══ */
+function SettingsDropdown({showSB,setShowSB,pointStep,setPointStep,autoFit,setAutoFit}){
+  const[open,setOpen]=useState(false);const ref=useRef(null);
+  useEffect(()=>{const h=e=>{if(ref.current&&!ref.current.contains(e.target))setOpen(false)};document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h)},[]);
+  return(<div ref={ref} style={{position:"relative"}}><Btn variant="ghost" onClick={()=>setOpen(!open)} style={{fontSize:12,padding:"6px 10px"}}>⚙</Btn>
+    {open&&<div style={{position:"absolute",top:"100%",right:0,marginTop:6,zIndex:100,background:T.surface,border:`1px solid ${T.border}`,borderRadius:14,padding:16,minWidth:220,boxShadow:"0 8px 30px rgba(0,0,0,.1)"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}><span style={{fontSize:13,fontWeight:700,color:T.text}}>Scoreboard</span>
+        <button onClick={()=>setShowSB(!showSB)} style={{width:42,height:24,borderRadius:12,border:"none",cursor:"pointer",background:showSB?T.success:T.border,position:"relative",transition:"background .2s"}}><div style={{width:18,height:18,borderRadius:9,background:"#fff",position:"absolute",top:3,left:showSB?21:3,transition:"left .2s",boxShadow:"0 1px 3px rgba(0,0,0,.15)"}}/></button></div>
+      {showSB&&<div><span style={{fontSize:12,fontWeight:600,color:T.textSoft}}>Point increment</span><div style={{display:"flex",gap:6,marginTop:6,flexWrap:"wrap"}}>{[5,10,25,50,100,200,500].map(v=><button key={v} onClick={()=>setPointStep(v)} style={{padding:"5px 10px",borderRadius:8,fontSize:12,fontWeight:700,fontFamily:T.fontMono,cursor:"pointer",border:"none",background:pointStep===v?T.text:T.bg,color:pointStep===v?"#fff":T.textSoft,transition:"all .1s"}}>{v}</button>)}</div><p style={{fontSize:11,color:T.textMuted,marginTop:8}}>+ adds {pointStep}, +½ adds {Math.round(pointStep/2)}</p></div>}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:14,paddingTop:14,borderTop:`1px solid ${T.borderLight}`}}><div><span style={{fontSize:13,fontWeight:700,color:T.text}}>Auto-fit text</span><p style={{fontSize:11,color:T.textMuted,marginTop:2}}>Shrink question to fit screen</p></div>
+        <button onClick={()=>setAutoFit(!autoFit)} style={{width:42,height:24,borderRadius:12,border:"none",cursor:"pointer",background:autoFit?T.success:T.border,position:"relative",transition:"background .2s"}}><div style={{width:18,height:18,borderRadius:9,background:"#fff",position:"absolute",top:3,left:autoFit?21:3,transition:"left .2s",boxShadow:"0 1px 3px rgba(0,0,0,.15)"}}/></button></div>
+    </div>}
+  </div>);
+}
+
+/* ═══ HTML EXPORT ═══ */
+function exportGameHTML(game){
+  const d=JSON.stringify(game).replace(/<\/script>/gi,"<\\/script>");
+  const html=`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>${(game.name||"Quiz Board").replace(/</g,"&lt;")}</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden}
+.page{position:fixed;inset:0;display:flex;flex-direction:column;padding:1vh 1.5vw;background:#f4f3f0;overflow:hidden}
+.topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:.6vh;flex-shrink:0;gap:6px}
+.topbar h1{font-size:2.4vh;font-weight:800;letter-spacing:-.5px;color:#1c1917}
+.gwrap{flex:1;position:relative;min-height:0}
+.grid{position:absolute;inset:0;display:grid}
+.cell{background:#fff;border:1px solid #e6e4df;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3vh;cursor:pointer;transition:transform .12s,box-shadow .12s,opacity .2s;user-select:none;overflow:hidden}
+.cell:hover:not(.v){transform:scale(1.03);box-shadow:0 4px 16px rgba(0,0,0,.08)}
+.cell.v{opacity:.2;background:#e5e4e0;cursor:default}.cell.v span{text-decoration:line-through;text-decoration-color:#c43040;text-decoration-thickness:2.5px}
+.pill{font-family:inherit;font-weight:600;font-size:12px;cursor:pointer;border-radius:50px;transition:all .15s;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1.5px solid #e6e4df;background:#fff;color:#1c1917;padding:6px 12px;line-height:1}
+.qpage{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;padding:1.5vh 1.5vw;background:#f4f3f0;overflow:hidden}
+.qcard{background:#fff;border:1px solid #e6e4df;border-radius:20px;padding:2vh 2.5vw;max-width:1200px;width:100%;text-align:center;box-shadow:0 12px 60px rgba(0,0,0,.06);display:flex;flex-direction:column;align-items:center;overflow:hidden;max-height:82vh}
+.acard{background:#f0faf6;border:1.5px solid rgba(4,168,126,.2);border-radius:20px;padding:2.5vh 2.5vw;max-width:1200px;width:100%;text-align:center;display:flex;flex-direction:column;align-items:center;overflow:hidden;max-height:84vh}
+.reveal-btn{margin-top:1.5vh;padding:10px 28px;font-size:clamp(.8rem,1.8vh,1.1rem);font-weight:700;font-family:inherit;cursor:pointer;border-radius:50px;transition:all .15s;flex-shrink:0}
+.answer-box{margin-top:1.5vh;padding:1.5vh 2vw;background:#f0faf6;border-radius:12px;border:1.5px solid rgba(4,168,126,.2);width:100%;flex-shrink:0}
+.timer-bar{margin-top:1.5vh;display:flex;align-items:center;gap:12px;width:100%;flex-shrink:0}
+.timer-track{flex:1;height:6px;background:#eeece8;border-radius:3px;overflow:hidden}
+.timer-fill{height:100%;border-radius:3px;transition:width 1s linear,background .3s}
+.media{margin-top:1.5vh;display:flex;flex-direction:column;align-items:center;gap:1.5vh;flex-shrink:0;max-height:20vh;overflow:hidden}
+.media img{max-width:100%;max-height:20vh;border-radius:10px;object-fit:contain;border:1px solid #eeece8}
+.media .yt{width:100%;max-width:400px;aspect-ratio:16/9;border-radius:10px;overflow:hidden;border:1px solid #eeece8}
+.media .yt iframe{width:100%;height:100%;border:none}
+.hidden{display:none!important}
+.q-btns{display:flex;gap:12px;flex-shrink:0;justify-content:center;padding-top:.8vh}
+.hint{color:#a8a29e;font-size:11px;margin-top:6px;text-align:center;flex-shrink:0}
+.fittext{width:100%;overflow:hidden;flex:0 1 auto}
+.fittext-inner{line-height:1.3;color:#1c1917;font-weight:700;letter-spacing:-.5px;word-break:break-word}
+</style></head><body>
+<div class="page" id="gridPage">
+<div class="topbar"><div style="display:flex;align-items:center;gap:8px"><h1>${(game.name||"Quiz").replace(/</g,"&lt;")}</h1></div>
+<div style="display:flex;gap:4px"><button class="pill" onclick="scramble()">Scramble</button><button class="pill" style="border-color:#dc2626;color:#dc2626" onclick="resetBoard()">Reset</button><button class="pill" onclick="toggleFS()">⛶</button></div></div>
+<div class="gwrap"><div class="grid" id="grid"></div></div></div>
+<div class="qpage hidden" id="qPage">
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0;width:100%">
+<div class="qcard" id="qCard">
+<div id="qCat" style="font-weight:800;font-size:clamp(.8rem,2.2vh,1.3rem);text-transform:uppercase;letter-spacing:3px;margin-bottom:.3vh;flex-shrink:0"></div>
+<div id="qSub" style="font-weight:500;font-size:clamp(.7rem,1.8vh,1rem);color:#78716c;margin-bottom:1.5vh;flex-shrink:0"></div>
+<div class="fittext" id="qFit" style="max-height:40vh"><div class="fittext-inner" id="qText"></div></div>
+<div id="qMedia" class="media hidden"></div>
+<div id="qTimer" class="timer-bar hidden"><div class="timer-track"><div class="timer-fill" id="timerFill"></div></div><span id="timerText" style="font-family:monospace;font-weight:700;font-size:clamp(1rem,2.5vh,1.6rem);min-width:50px;text-align:right"></span></div>
+<button id="revealBtn" class="reveal-btn hidden" onclick="revealAnswer()">Reveal Answer</button>
+<div id="answerBox" class="answer-box hidden"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#04a87e;margin-bottom:4px">Answer</div><div class="fittext" id="aFit" style="max-height:15vh"><div class="fittext-inner" id="aText"></div></div></div>
+</div></div>
+<div class="q-btns"><button class="pill" style="font-size:14px;padding:10px 28px" onclick="goBack()">← Back to Board</button></div>
+<div class="hint">Esc = back · Space = reveal · Right-click a cell to un-gray it</div>
+</div>
+<div id="answerPage" class="qpage hidden">
+<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0;width:100%">
+<div class="acard" id="aCard">
+<div id="aCat2" style="font-size:clamp(.7rem,1.6vh,.9rem);font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#04a87e;margin-bottom:.3vh;flex-shrink:0"></div>
+<div class="fittext" id="aFit2" style="max-height:35vh"><div class="fittext-inner" id="aText2"></div></div>
+<div id="aImg2" style="margin-top:1.5vh;flex-shrink:0;max-height:40vh;overflow:hidden"></div>
+</div></div>
+<div class="q-btns"><button class="pill" style="font-size:14px;padding:10px 28px" onclick="backToQ()">← Back to Question</button></div>
+</div>
+<script>
+const G=${d};
+const cats=G.categories,boxes=G.boxes,COLS=G.columns,ROWS=G.rows,TIMER=G.timerSeconds||0;
+let order=boxes.map((_,i)=>i),visited={},curIdx=null,onAnswerPage=false;
+const grid=document.getElementById("grid");
+grid.style.gridTemplateColumns="repeat("+COLS+",1fr)";
+grid.style.gridTemplateRows="repeat("+ROWS+",1fr)";
+grid.style.gap=Math.min(.6,3/ROWS)+"vh "+Math.min(.4,2/COLS)+"vw";
+const cfv=Math.min(2.8,15/ROWS),sfv=Math.min(2,10/ROWS);
+let timerInterval=null;
+function yid(u){if(!u)return null;const m=u.match(/(?:youtube\\.com\\/(?:watch\\?v=|embed\\/|shorts\\/)|youtu\\.be\\/)([\\w-]{11})/);return m?m[1]:null}
+function fitText(outerId,innerId,maxPx,minPx){
+  const outer=document.getElementById(outerId),inner=document.getElementById(innerId);
+  if(!outer||!inner)return;let lo=minPx||14,hi=maxPx||80,best=lo;
+  for(let i=0;i<25;i++){const mid=Math.floor((lo+hi)/2);inner.style.fontSize=mid+"px";
+    if(inner.scrollHeight<=outer.clientHeight&&inner.scrollWidth<=outer.clientWidth){best=mid;lo=mid+1}else{hi=mid-1}}
+  inner.style.fontSize=best+"px";
+}
+function buildGrid(){grid.innerHTML="";order.slice(0,COLS*ROWS).forEach(idx=>{
+const box=idx<boxes.length?boxes[idx]:null;const d=document.createElement("div");d.className="cell"+(visited[idx]?" v":"");
+if(!box){d.style.opacity="0.06";grid.appendChild(d);return}
+const cat=cats[box.catIdx]||{name:"?",color:"#999"};d.style.borderLeft="4px solid "+cat.color;
+const c=document.createElement("span");c.style.cssText="font-weight:800;font-size:clamp(0.55rem,"+cfv+"vh,1.8rem);line-height:1.1;letter-spacing:-0.3px;color:"+(visited[idx]?"#999":cat.color);c.textContent=cat.name;
+const s=document.createElement("span");s.style.cssText="font-weight:500;font-size:clamp(0.4rem,"+sfv+"vh,1.1rem);line-height:1.1;color:"+(visited[idx]?"#bbb":"#78716c");s.textContent=box.subtitle;
+d.appendChild(c);d.appendChild(s);
+if(!visited[idx])d.addEventListener("click",()=>showQ(idx));
+d.addEventListener("contextmenu",e=>{e.preventDefault();if(visited[idx]){delete visited[idx];buildGrid()}});
+grid.appendChild(d)})}
+function showQ(idx){visited[idx]=true;curIdx=idx;onAnswerPage=false;const box=boxes[idx],cat=cats[box.catIdx]||{name:"?",color:"#999"};
+document.getElementById("qCat").textContent=cat.name;document.getElementById("qCat").style.color=cat.color;
+document.getElementById("qSub").textContent=box.subtitle;document.getElementById("qText").innerHTML=box.question||"";
+document.getElementById("qCard").style.borderTop="5px solid "+cat.color;
+const media=document.getElementById("qMedia");media.innerHTML="";media.classList.add("hidden");
+if(box.imageUrl){const img=document.createElement("img");img.src=box.imageUrl;img.onerror=()=>img.style.display="none";media.appendChild(img);media.classList.remove("hidden")}
+const vid=yid(box.videoUrl);if(vid){const w=document.createElement("div");w.className="yt";w.innerHTML='<iframe src="https://www.youtube.com/embed/'+vid+'" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen></iframe>';media.appendChild(w);media.classList.remove("hidden")}
+const rb=document.getElementById("revealBtn"),ab=document.getElementById("answerBox");
+const hasA=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim());
+const hasAImg=box.answerImageUrl&&box.answerImageUrl.trim();
+if(hasA){rb.classList.remove("hidden");rb.style.background=cat.color+"14";rb.style.color=cat.color;rb.style.border="2px solid "+cat.color+"44";rb.textContent=hasAImg?"Reveal Answer →":"Reveal Answer"}else{rb.classList.add("hidden")}
+ab.classList.add("hidden");document.getElementById("aText").innerHTML=box.answer||"";
+document.getElementById("gridPage").classList.add("hidden");document.getElementById("qPage").classList.remove("hidden");document.getElementById("answerPage").classList.add("hidden");
+const tb=document.getElementById("qTimer");if(TIMER>0){tb.classList.remove("hidden");startTimer(TIMER)}else{tb.classList.add("hidden")}
+setTimeout(()=>{fitText("qFit","qText",80,14)},50);
+history.pushState({v:"q"},"")}
+function revealAnswer(){
+const box=boxes[curIdx],cat=cats[box.catIdx]||{name:"?",color:"#999"};
+const hasAImg=box.answerImageUrl&&box.answerImageUrl.trim();
+if(hasAImg){document.getElementById("aCat2").textContent=cat.name+" — Answer";
+document.getElementById("aText2").innerHTML=box.answer||"";
+const c=document.getElementById("aImg2");c.innerHTML="";
+const img=document.createElement("img");img.src=box.answerImageUrl;img.style.cssText="max-width:100%;max-height:40vh;border-radius:12px;object-fit:contain;border:1px solid #04a87e44";img.onerror=()=>img.style.display="none";c.appendChild(img);
+document.getElementById("qPage").classList.add("hidden");document.getElementById("answerPage").classList.remove("hidden");
+onAnswerPage=true;setTimeout(()=>{fitText("aFit2","aText2",80,14)},50);history.pushState({v:"a"},"")
+}else{document.getElementById("revealBtn").classList.add("hidden");document.getElementById("answerBox").classList.remove("hidden");
+setTimeout(()=>{fitText("aFit","aText",60,12)},50)}}
+function backToQ(){onAnswerPage=false;document.getElementById("answerPage").classList.add("hidden");document.getElementById("qPage").classList.remove("hidden")}
+function goBack(){clearInterval(timerInterval);curIdx=null;onAnswerPage=false;document.getElementById("qPage").classList.add("hidden");document.getElementById("answerPage").classList.add("hidden");document.getElementById("gridPage").classList.remove("hidden");buildGrid()}
+function scramble(){for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[order[i],order[j]]=[order[j],order[i]]}buildGrid()}
+function resetBoard(){visited={};order=boxes.map((_,i)=>i);buildGrid()}
+function toggleFS(){if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen()}
+function startTimer(s){clearInterval(timerInterval);let left=s;const fill=document.getElementById("timerFill"),txt=document.getElementById("timerText");
+function upd(){const p=left/s;fill.style.width=(p*100)+"%";fill.style.background=p>.3?"#1c1917":"#dc2626";txt.style.color=p>.3?"#1c1917":"#dc2626";txt.textContent=Math.floor(left/60)+":"+String(left%60).padStart(2,"0")}
+upd();timerInterval=setInterval(()=>{left--;if(left<=0){clearInterval(timerInterval);left=0}upd()},1000)}
+window.addEventListener("popstate",()=>{if(onAnswerPage){backToQ()}else if(curIdx!==null){goBack()}});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(onAnswerPage)backToQ();else goBack()}if(e.key===" "&&!document.getElementById("revealBtn").classList.contains("hidden")){e.preventDefault();revealAnswer()}});
+buildGrid();
+<\/script></body></html>`;
+  const blob=new Blob([html],{type:"text/html"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+  a.download=(game.name||"quiz-board").replace(/[^a-zA-Z0-9-_ ]/g,"").replace(/\s+/g,"-").toLowerCase()+".html";a.click();URL.revokeObjectURL(a.href);
+}
+
+/* ═══ JSON IMPORT/EXPORT ═══ */
+function exportGameJSON(game){const blob=new Blob([JSON.stringify(game,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=(game.name||"quiz").replace(/[^a-zA-Z0-9-_ ]/g,"").replace(/\s+/g,"-").toLowerCase()+".json";a.click();URL.revokeObjectURL(a.href)}
+function importGameJSON(file,cb){const r=new FileReader();r.onload=e=>{try{const g=JSON.parse(e.target.result);if(g.categories&&g.boxes){g.id=uid();cb(g)}else alert("Invalid quiz file")}catch(er){alert("Could not read file: "+er.message)}};r.readAsText(file)}
+
+/* ═══════════════════════════════════════
+   HOME
+   ═══════════════════════════════════════ */
+function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport}){
+  const fileRef=useRef(null);
+  return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font}}>
+    <div style={{maxWidth:800,margin:"0 auto",padding:"48px 24px 80px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:40,flexWrap:"wrap",gap:16}}>
+        <div><h1 style={{fontSize:36,fontWeight:900,color:T.text,letterSpacing:-1.5,margin:0}}>Quiz Board</h1><p style={{color:T.textSoft,fontSize:15,marginTop:6}}>Create and manage your quiz games</p></div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><input ref={fileRef} type="file" accept=".json" style={{display:"none"}} onChange={e=>{if(e.target.files[0]){onImport(e.target.files[0]);e.target.value=""}}}/><Btn onClick={()=>fileRef.current?.click()}>Import JSON</Btn><Btn variant="primary" onClick={onCreate} style={{fontSize:15,padding:"12px 28px"}}>+ New Game</Btn></div>
+      </div>
+      {games.length===0?(<div style={{textAlign:"center",padding:"80px 20px",background:T.surface,borderRadius:T.radius,border:`1.5px dashed ${T.border}`}}><div style={{fontSize:48,marginBottom:12}}>🎯</div><p style={{fontSize:20,fontWeight:700,color:T.text,margin:0}}>No games yet</p><p style={{color:T.textMuted,fontSize:14,marginTop:6}}>Create your first quiz game to get started</p><Btn variant="primary" onClick={onCreate} style={{marginTop:16}}>+ New Game</Btn></div>):(
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>{games.map(g=>(<div key={g.id} style={{background:T.surface,borderRadius:T.radius,border:`1px solid ${T.border}`,overflow:"hidden"}}>
+          <div style={{padding:"20px 24px 14px",cursor:"pointer"}} onClick={()=>onSelect(g.id,"edit")}><div style={{display:"flex",gap:5,marginBottom:10}}>{g.categories.slice(0,8).map((c,ci)=><div key={ci} style={{width:10,height:10,borderRadius:5,background:c.color}}/>)}</div><h3 style={{fontSize:18,fontWeight:700,color:T.text,margin:0}}>{g.name}</h3><p style={{fontSize:13,color:T.textMuted,marginTop:4,fontFamily:T.fontMono}}>{g.columns}×{g.rows} · {g.categories.length} cat · {g.boxes.length} Q{g.timerSeconds?` · ${g.timerSeconds}s timer`:""}</p></div>
+          <div style={{display:"flex",alignItems:"center",gap:4,padding:"8px 16px 14px",borderTop:`1px solid ${T.borderLight}`,flexWrap:"wrap"}}><Btn variant="primary" onClick={()=>onSelect(g.id,"play")} style={{fontSize:13,padding:"8px 20px"}}>▶ Play</Btn><Btn variant="ghost" onClick={()=>onSelect(g.id,"edit")} style={{fontSize:13}}>✎ Edit</Btn><Btn variant="ghost" onClick={()=>onDuplicate(g.id)} style={{fontSize:13}}>⧉ Dup</Btn><Btn variant="ghost" onClick={()=>exportGameHTML(g)} style={{fontSize:13}}>⤓ HTML</Btn><Btn variant="ghost" onClick={()=>exportGameJSON(g)} style={{fontSize:13}}>⤓ JSON</Btn><div style={{flex:1}}/><Btn variant="danger" onClick={()=>onDelete(g.id)} style={{fontSize:12,padding:"6px 12px"}}>Delete</Btn></div>
+        </div>))}</div>)}
+    </div>
+  </div>);
+}
+
+/* ═══════════════════════════════════════
+   EDITOR
+   ═══════════════════════════════════════ */
+function Editor({game,onSave,onPlay,onBack}){
+  const[name,setName]=useState(game.name);
+  const[cats,setCats]=useState(game.categories.map(c=>({...c})));
+  const[bxs,setBxs]=useState(game.boxes.map(b=>({...b})));
+  const[cols,setCols]=useState(game.columns);
+  const[rws,setRws]=useState(game.rows);
+  const[timer,setTimer]=useState(game.timerSeconds||0);
+  const[expandedCat,setExpandedCat]=useState(null);
+  const[saved,setSaved]=useState(false);
+  const qRef=useRef(null);
+
+  const total=cols*rws;const mismatch=bxs.length!==total;
+
+  const updateCat=(i,f,v)=>setCats(p=>p.map((c,j)=>j===i?{...c,[f]:v}:c));
+  const addCat=()=>setCats(p=>[...p,{name:"New Category",color:PC[p.length%PC.length]}]);
+  const removeCat=idx=>{setCats(p=>p.filter((_,i)=>i!==idx));setBxs(p=>p.filter(b=>b.catIdx!==idx).map(b=>({...b,catIdx:b.catIdx>idx?b.catIdx-1:b.catIdx})));if(expandedCat===idx)setExpandedCat(null);else if(expandedCat>idx)setExpandedCat(expandedCat-1)};
+  const addBox=ci=>setBxs(p=>[...p,{catIdx:ci,subtitle:"",question:"",answer:"",imageUrl:"",videoUrl:"",answerImageUrl:""}]);
+  const updateBox=(i,f,v)=>setBxs(p=>p.map((b,j)=>j===i?{...b,[f]:v}:b));
+  const removeBox=i=>setBxs(p=>p.filter((_,j)=>j!==i));
+  const boxesForCat=ci=>bxs.map((b,i)=>({...b,_i:i})).filter(b=>b.catIdx===ci);
+
+  const getData=()=>({...game,name,categories:cats,boxes:bxs,columns:cols,rows:rws,timerSeconds:timer});
+  const handleSave=()=>{onSave(getData());setSaved(true);setTimeout(()=>setSaved(false),1500)};
+  const handlePlay=()=>{onSave(getData());onPlay(getData())};
+
+  const lbl={display:"block",fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:2,color:T.textMuted,marginBottom:12};
+  const inp={padding:"8px 12px",border:`1.5px solid ${T.borderLight}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:T.font,color:T.text,background:T.surfaceAlt};
+
+  return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font}}>
+    <div style={{maxWidth:760,margin:"0 auto",padding:"24px 20px 80px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}><Btn variant="ghost" onClick={()=>{handleSave();onBack()}} style={{fontSize:14}}>← Back</Btn><div style={{display:"flex",gap:8,alignItems:"center"}}>{saved&&<span style={{fontSize:13,color:T.success,fontWeight:600}}>Saved ✓</span>}<Btn onClick={handleSave}>Save</Btn><Btn variant="primary" onClick={handlePlay}>▶ Play</Btn></div></div>
+
+      <input value={name} onChange={e=>setName(e.target.value)} placeholder="Game name" style={{width:"100%",border:"none",outline:"none",fontSize:32,fontWeight:800,color:T.text,background:"transparent",padding:"0 0 20px",fontFamily:T.font,borderBottom:`2px solid ${T.borderLight}`,letterSpacing:-.5}}/>
+
+      <div style={{marginTop:28}}><label style={lbl}>Grid & Timer</label>
+        <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
+          {[["Columns",cols,setCols],["Rows",rws,setRws]].map(([l,v,s])=><div key={l} style={{display:"flex",flexDirection:"column",gap:4}}><span style={{fontSize:11,fontWeight:600,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>{l}</span><input type="number" min={1} max={10} value={v} onChange={e=>s(Math.max(1,Math.min(10,+e.target.value||1)))} style={{width:68,padding:"10px 12px",border:`2px solid ${T.border}`,borderRadius:T.radiusSm,fontSize:18,fontWeight:700,textAlign:"center",outline:"none",fontFamily:T.fontMono,background:T.surface}}/></div>).reduce((a,e,i)=>i===0?[e]:[...a,<span key="x" style={{color:T.textMuted,fontSize:20,marginTop:18}}>×</span>,e],[])}
+          <div style={{display:"flex",flexDirection:"column",gap:4,marginLeft:12}}><span style={{fontSize:11,fontWeight:600,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Timer (sec)</span><input type="number" min={0} max={600} value={timer} onChange={e=>setTimer(Math.max(0,Math.min(600,+e.target.value||0)))} style={{width:80,padding:"10px 12px",border:`2px solid ${T.border}`,borderRadius:T.radiusSm,fontSize:18,fontWeight:700,textAlign:"center",outline:"none",fontFamily:T.fontMono,background:T.surface}}/></div>
+          <span style={{fontFamily:T.fontMono,fontSize:13,fontWeight:600,marginTop:20,color:mismatch?T.danger:T.success}}>{total} needed · {bxs.length} created {mismatch?"✗":"✓"}</span>
+        </div>
+      </div>
+
+      <div style={{marginTop:28}}><label style={lbl}>Categories & Questions</label>
+        {cats.map((cat,ci)=><div key={ci} style={{background:T.surface,borderRadius:14,marginBottom:10,border:`1px solid ${T.border}`,overflow:"hidden"}}>
+          <div onClick={()=>setExpandedCat(expandedCat===ci?null:ci)} style={{display:"flex",alignItems:"center",gap:0,padding:"0 14px 0 0",cursor:"pointer",minHeight:52}}>
+            <div style={{width:5,alignSelf:"stretch",background:cat.color,flexShrink:0,borderRadius:"14px 0 0 14px"}}/>
+            <input value={cat.name} onClick={e=>e.stopPropagation()} onChange={e=>updateCat(ci,"name",e.target.value)} style={{flex:1,border:"none",outline:"none",fontSize:15,fontWeight:700,color:T.text,background:"transparent",padding:"14px 0 14px 14px",fontFamily:T.font}} placeholder="Category name"/>
+            <input type="color" value={cat.color} onClick={e=>e.stopPropagation()} onChange={e=>updateCat(ci,"color",e.target.value)} style={{width:26,height:26,border:`2px solid ${T.border}`,borderRadius:8,cursor:"pointer",padding:0,flexShrink:0}}/>
+            <span style={{fontSize:12,fontWeight:700,color:T.textMuted,fontFamily:T.fontMono,background:T.bg,padding:"3px 8px",borderRadius:20,flexShrink:0,margin:"0 8px"}}>{boxesForCat(ci).length}</span>
+            <span style={{color:T.textMuted,fontSize:16,width:20,textAlign:"center",flexShrink:0}}>{expandedCat===ci?"▾":"▸"}</span>
+            {cats.length>1&&<button onClick={e=>{e.stopPropagation();removeCat(ci)}} style={{background:"none",border:"none",fontSize:20,color:T.textMuted,cursor:"pointer",padding:"0 4px",lineHeight:1,flexShrink:0}}>×</button>}
+          </div>
+          {expandedCat===ci&&<div style={{padding:"8px 16px 16px",borderTop:`1px solid ${T.borderLight}`}}>
+            {boxesForCat(ci).length===0&&<p style={{color:T.textMuted,fontSize:13,fontStyle:"italic",margin:"4px 0 8px"}}>No questions yet</p>}
+            {boxesForCat(ci).map((box,bi)=><div key={box._i} style={{marginBottom:16,padding:"12px",background:T.bg,borderRadius:12,border:`1px solid ${T.borderLight}`}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <span style={{fontSize:12,fontWeight:800,color:cat.color,fontFamily:T.fontMono,flexShrink:0}}>Q{bi+1}</span>
+                <input value={box.subtitle} onChange={e=>updateBox(box._i,"subtitle",e.target.value)} placeholder="Subtitle" style={{...inp,width:140,flexShrink:0}}/>
+                <div style={{flex:1}}/>
+                <button onClick={()=>removeBox(box._i)} style={{background:"none",border:"none",fontSize:18,color:T.textMuted,cursor:"pointer",padding:"0 4px",lineHeight:1}}>×</button>
+              </div>
+              <div style={{marginBottom:6}}><span style={{fontSize:11,fontWeight:700,color:T.textSoft,textTransform:"uppercase",letterSpacing:1}}>Question</span><FormatBar targetRef={qRef}/><RichInput ref={qRef} value={box.question} onChange={v=>updateBox(box._i,"question",v)} placeholder="Type your question here…" style={{minHeight:80}}/></div>
+              <div style={{marginBottom:6}}><span style={{fontSize:11,fontWeight:700,color:T.success,textTransform:"uppercase",letterSpacing:1}}>Answer</span><RichInput value={box.answer||""} onChange={v=>updateBox(box._i,"answer",v)} placeholder="Answer (revealed on click)" style={{minHeight:50,borderColor:T.success+"44",background:"#f0faf6"}}/></div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <div style={{flex:1,minWidth:200}}><ImageUpload value={box.imageUrl||""} onChange={v=>updateBox(box._i,"imageUrl",v)} label="🖼 Question Image" color="#1a8faa"/></div>
+                <div style={{flex:1,minWidth:200}}><span style={{fontSize:10,fontWeight:700,color:"#c43040",textTransform:"uppercase",letterSpacing:1}}>▶ YouTube URL</span><input value={box.videoUrl||""} onChange={e=>updateBox(box._i,"videoUrl",e.target.value)} placeholder="https://youtube.com/..." style={{...inp,width:"100%",marginTop:2}}/></div>
+              </div>
+              <div style={{marginTop:6}}><ImageUpload value={box.answerImageUrl||""} onChange={v=>updateBox(box._i,"answerImageUrl",v)} label="🖼 Answer Image" color={T.success} borderColor={T.success+"44"}/></div>
+              {box.videoUrl&&<div style={{marginTop:6}}><MediaPreview videoUrl={box.videoUrl} maxHeight="100px"/></div>}
+            </div>)}
+            <button onClick={()=>addBox(ci)} style={{marginTop:4,background:"none",border:`1.5px dashed ${T.border}`,borderRadius:8,padding:"10px 16px",fontSize:13,fontWeight:600,color:T.textMuted,cursor:"pointer",width:"100%",fontFamily:T.font}}>+ Add question</button>
+          </div>}
+        </div>)}
+        <button onClick={addCat} style={{marginTop:6,background:"none",border:`2px dashed ${T.border}`,borderRadius:14,padding:16,fontSize:14,fontWeight:700,color:T.textMuted,cursor:"pointer",width:"100%",fontFamily:T.font}}>+ Add category</button>
+      </div>
+    </div>
+  </div>);
+}
+
+/* ═══════════════════════════════════════
+   PLAY MODE
+   ═══════════════════════════════════════ */
+function PlayBoard({game,onEdit,onHome}){
+  const{categories,boxes,columns,rows,timerSeconds}=game;
+  const[order,setOrder]=useState(()=>boxes.map((_,i)=>i));
+  const[visited,setVisited]=useState({});
+  const[activeIdx,setActiveIdx]=useState(null);
+  const[showAnswer,setShowAnswer]=useState(false);
+  const[scores,setScores]=useState([]);
+  const[showSB,setShowSB]=useState(false);
+  const[pointStep,setPointStep]=useState(100);
+  const[autoFit,setAutoFit]=useState(false);
+
+  const cfv=Math.min(2.8,15/rows),sfv=Math.min(2,10/rows);
+  const total=columns*rows;
+  const strike={textDecoration:"line-through",textDecorationColor:"#c43040",textDecorationThickness:"2.5px"};
+
+  const unvisit=i=>{setVisited(p=>{const n={...p};delete n[i];return n})};
+  const reset=()=>{setVisited({});setActiveIdx(null);setShowAnswer(false);setOrder(boxes.map((_,i)=>i))};
+  const doScramble=useCallback(()=>setOrder(p=>shuffle(p)),[]);
+  const toggleFS=()=>{if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen()};
+
+  // Push browser history entries so back-swipe navigates within the app, not away
+  useEffect(()=>{
+    const onPop=()=>{
+      if(activeIdx!==null){
+        if(showAnswer){setShowAnswer(false)}
+        else{setActiveIdx(null);setShowAnswer(false)}
+      }
+    };
+    window.addEventListener("popstate",onPop);
+    return()=>window.removeEventListener("popstate",onPop);
+  },[activeIdx,showAnswer]);
+
+  const openQuestion=i=>{
+    setVisited(p=>({...p,[i]:true}));setActiveIdx(i);setShowAnswer(false);
+    window.history.pushState({view:"question"},"");
+  };
+  const revealAns=()=>{
+    setShowAnswer(true);
+    window.history.pushState({view:"answer"},"");
+  };
+  const goBack=()=>{
+    if(showAnswer){setShowAnswer(false)}
+    else{setActiveIdx(null);setShowAnswer(false)}
+  };
+
+  useEffect(()=>{
+    const h=e=>{
+      if(e.key==="Escape"){e.preventDefault();goBack()}
+      if(e.key===" "&&activeIdx!==null&&!showAnswer){e.preventDefault();revealAns()}
+    };
+    window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);
+  },[activeIdx,showAnswer]);
+
+  // ─── ANSWER PAGE (separate full page when answer has image) ───
+  if(activeIdx!==null&&activeIdx<boxes.length&&showAnswer){
+    const box=boxes[activeIdx];const cat=categories[box.catIdx]||{name:"?",color:"#999"};
+    const hasImg=box.answerImageUrl&&box.answerImageUrl.trim();
+
+    if(autoFit){
+      return(
+        <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1.5vh 1.5vw",background:T.bg,fontFamily:T.font,overflow:"hidden"}}>
+          <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:0}}>
+            <div style={{background:"#f0faf6",border:`1.5px solid ${T.success}33`,borderRadius:20,padding:"2.5vh 2.5vw",maxWidth:1200,width:"100%",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",overflow:"hidden",maxHeight:"84vh"}}>
+              <div style={{fontSize:"clamp(.7rem,1.6vh,.9rem)",fontWeight:700,textTransform:"uppercase",letterSpacing:2,color:T.success,marginBottom:".3vh",flexShrink:0}}>{cat.name} — Answer</div>
+              {box.answer&&box.answer.trim()&&<AutoFitText html={box.answer} baseSizePx={80} minSizePx={14} style={{flex:"0 1 auto",maxHeight:hasImg?"30vh":"50vh"}}/>}
+              {hasImg&&<img src={box.answerImageUrl} alt="" style={{maxWidth:"100%",flex:"0 1 auto",maxHeight:"40vh",borderRadius:12,objectFit:"contain",marginTop:"1.5vh",border:`1px solid ${T.success}44`}} onError={e=>{e.target.style.display="none"}}/>}
+            </div>
+          </div>
+          <div style={{display:"flex",justifyContent:"center",gap:12,flexShrink:0,paddingTop:"0.8vh"}}><Btn onClick={goBack} style={{fontSize:14,padding:"10px 28px"}}>← Back to Question</Btn></div>
+        </div>);
+    }
+
+    // Normal scrollable answer page
+    return(
+      <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",alignItems:"center",padding:"2vh 2vw",background:T.bg,fontFamily:T.font,overflowY:"auto"}}>
+        <div style={{background:"#f0faf6",border:`1.5px solid ${T.success}33`,borderRadius:24,padding:"4vh 3vw",maxWidth:1100,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",marginTop:"auto",marginBottom:"2vh"}}>
+          <div style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:3,color:T.success,marginBottom:"1vh"}}>{cat.name} — Answer</div>
+          {box.answer&&box.answer.trim()&&<div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:700,fontFamily:T.font}} dangerouslySetInnerHTML={{__html:box.answer}}/>}
+          {hasImg&&<div style={{marginTop:"2vh"}}><img src={box.answerImageUrl} alt="" style={{maxWidth:"100%",maxHeight:"50vh",borderRadius:12,objectFit:"contain",border:`1px solid ${T.success}44`}} onError={e=>{e.target.style.display="none"}}/></div>}
+        </div>
+        <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><Btn onClick={goBack} style={{fontSize:15,padding:"12px 32px"}}>← Back to Question</Btn></div>
+      </div>);
+  }
+
+  // ─── QUESTION PAGE ───
+  if(activeIdx!==null&&activeIdx<boxes.length){
+    const box=boxes[activeIdx];const cat=categories[box.catIdx]||{name:"?",color:"#999"};
+    const hasAnswer=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim());
+    const hasAnswerImg=box.answerImageUrl&&box.answerImageUrl.trim();
+    // If answer has image → reveal goes to separate page. If no image → inline reveal.
+
+    if(autoFit){
+      return(
+        <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1.5vh 1.5vw",background:T.bg,fontFamily:T.font,overflow:"hidden"}}>
+          <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:0}}>
+            <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:20,padding:"2vh 2.5vw",maxWidth:1200,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",borderTop:`5px solid ${cat.color}`,display:"flex",flexDirection:"column",alignItems:"center",overflow:"hidden",maxHeight:"82vh"}}>
+              <div style={{fontWeight:800,fontSize:"clamp(.8rem,2.2vh,1.3rem)",textTransform:"uppercase",letterSpacing:3,marginBottom:".3vh",color:cat.color,fontFamily:T.font,flexShrink:0}}>{cat.name}</div>
+              <div style={{fontWeight:500,fontSize:"clamp(.7rem,1.8vh,1rem)",color:T.textSoft,marginBottom:"1.5vh",flexShrink:0}}>{box.subtitle}</div>
+              <AutoFitText html={box.question} baseSizePx={80} minSizePx={14} style={{flex:"0 1 auto",maxHeight:"40vh"}}/>
+              {(box.imageUrl||ytId(box.videoUrl))&&<div style={{flexShrink:0,maxHeight:"20vh",overflow:"hidden",marginTop:"1.5vh",width:"100%",display:"flex",justifyContent:"center"}}>
+                {box.imageUrl&&<img src={box.imageUrl} alt="" style={{maxWidth:"100%",maxHeight:"20vh",borderRadius:10,objectFit:"contain"}} onError={e=>{e.target.style.display="none"}}/>}
+                {ytId(box.videoUrl)&&<div style={{width:"100%",maxWidth:400,aspectRatio:"16/9",borderRadius:10,overflow:"hidden"}}><iframe src={`https://www.youtube.com/embed/${ytId(box.videoUrl)}`} title="Video" style={{width:"100%",height:"100%",border:"none"}} allowFullScreen/></div>}
+              </div>}
+              {(timerSeconds||0)>0&&<div style={{flexShrink:0,width:"100%"}}><Timer seconds={timerSeconds}/></div>}
+              {hasAnswer&&!hasAnswerImg&&!showAnswer&&<button onClick={revealAns} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,flexShrink:0}}>Reveal Answer</button>}
+              {hasAnswer&&hasAnswerImg&&<button onClick={revealAns} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,flexShrink:0}}>Reveal Answer →</button>}
+              {hasAnswer&&!hasAnswerImg&&showAnswer&&<div style={{marginTop:"1.5vh",padding:"1.5vh 2vw",background:"#f0faf6",borderRadius:12,border:`1.5px solid ${T.success}33`,width:"100%",flexShrink:0}}>
+                <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:2,color:T.success,marginBottom:4}}>Answer</div>
+                <AutoFitText html={box.answer} baseSizePx={60} minSizePx={12} style={{maxHeight:"15vh"}}/>
+              </div>}
+            </div>
+          </div>
+          <div style={{display:"flex",justifyContent:"center",gap:12,flexShrink:0,paddingTop:"0.8vh"}}><Btn onClick={goBack} style={{fontSize:14,padding:"10px 28px"}}>← Back</Btn></div>
+        </div>);
+    }
+
+    // Normal mode: scrollable
+    return(
+      <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",alignItems:"center",padding:"2vh 2vw",background:T.bg,fontFamily:T.font,overflowY:"auto"}}>
+        <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:24,padding:"4vh 3vw",maxWidth:1100,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",borderTop:`6px solid ${cat.color}`,marginTop:"auto",marginBottom:"2vh"}}>
+          <div style={{fontWeight:800,fontSize:"clamp(1rem,2.8vh,1.6rem)",textTransform:"uppercase",letterSpacing:4,marginBottom:".5vh",color:cat.color,fontFamily:T.font}}>{cat.name}</div>
+          <div style={{fontWeight:500,fontSize:"clamp(.9rem,2.2vh,1.3rem)",color:T.textSoft,marginBottom:"3vh"}}>{box.subtitle}</div>
+          <div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:700,letterSpacing:-.5,fontFamily:T.font}} dangerouslySetInnerHTML={{__html:box.question}}/>
+          <MediaPreview imageUrl={box.imageUrl} videoUrl={box.videoUrl} maxHeight="35vh"/>
+          {(timerSeconds||0)>0&&<Timer seconds={timerSeconds}/>}
+          {hasAnswer&&!hasAnswerImg&&!showAnswer&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer</button>}
+          {hasAnswer&&hasAnswerImg&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer →</button>}
+          {hasAnswer&&!hasAnswerImg&&showAnswer&&<div style={{marginTop:"3vh",padding:"3vh 3vw",background:"#f0faf6",borderRadius:16,border:`1.5px solid ${T.success}33`}}>
+            <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:2,color:T.success,marginBottom:8}}>Answer</div>
+            <div style={{fontSize:"clamp(1.2rem,4vh,2.6rem)",lineHeight:1.3,color:T.text,fontWeight:700,fontFamily:T.font}} dangerouslySetInnerHTML={{__html:box.answer}}/>
+          </div>}
+        </div>
+        <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><Btn onClick={goBack} style={{fontSize:15,padding:"12px 32px"}}>← Back to Board</Btn></div>
+        <p style={{color:T.textMuted,fontSize:12,marginTop:8,flexShrink:0}}>Esc = back · Space = reveal · Right-click cells to un-gray</p>
+      </div>);
+  }
+
+  // Grid view
+  return(
+    <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1vh 1.5vw",background:T.bg,fontFamily:T.font,overflow:"hidden"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,flexWrap:"nowrap",gap:6,marginBottom:"0.6vh"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}><Btn variant="ghost" onClick={onHome} style={{fontSize:12,padding:"5px 8px"}}>← Home</Btn><h1 style={{fontSize:"2.4vh",fontWeight:800,letterSpacing:-.5,color:T.text,margin:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{game.name}</h1></div>
+        <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
+          <Btn onClick={doScramble} style={{borderColor:"#1a8faa",color:"#1a8faa",fontSize:12,padding:"6px 12px"}}>Scramble</Btn>
+          <Btn onClick={reset} style={{borderColor:T.danger,color:T.danger,fontSize:12,padding:"6px 12px"}}>Reset</Btn>
+          <Btn variant="ghost" onClick={toggleFS} style={{fontSize:12,padding:"6px 8px"}}>⛶</Btn>
+          <Btn variant="ghost" onClick={onEdit} style={{fontSize:12,padding:"6px 8px"}}>✎</Btn>
+          <SettingsDropdown showSB={showSB} setShowSB={setShowSB} pointStep={pointStep} setPointStep={setPointStep} autoFit={autoFit} setAutoFit={setAutoFit}/>
+        </div>
+      </div>
+      {showSB&&<div style={{flexShrink:0,marginBottom:"0.4vh"}}><Scoreboard scores={scores} setScores={setScores} pointStep={pointStep}/></div>}
+      <div style={{flex:1,position:"relative",minHeight:0}}>
+        <div style={{position:"absolute",inset:0,display:"grid",gridTemplateColumns:`repeat(${columns},1fr)`,gridTemplateRows:`repeat(${rows},1fr)`,gap:`${Math.min(.6,3/rows)}vh ${Math.min(.4,2/columns)}vw`}}>
+          {order.slice(0,total).map(origIdx=>{
+            const box=origIdx<boxes.length?boxes[origIdx]:null;const isV=visited[origIdx];
+            if(!box)return<div key={origIdx} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,opacity:.06}}/>;
+            const cat=categories[box.catIdx]||{name:"?",color:"#999"};
+            return(<div key={origIdx} onClick={()=>!isV&&openQuestion(origIdx)}
+              onContextMenu={e=>{e.preventDefault();if(isV)unvisit(origIdx)}}
+              style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,borderLeft:`4px solid ${cat.color}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"0.3vh",transition:"transform .12s,box-shadow .12s,opacity .2s",userSelect:"none",overflow:"hidden",...(isV?{opacity:.2,background:"#e5e4e0",cursor:"context-menu"}:{cursor:"pointer"})}}>
+              <span style={{fontWeight:800,fontSize:`clamp(.55rem,${cfv}vh,1.8rem)`,lineHeight:1.1,letterSpacing:-.3,color:isV?"#999":cat.color,...(isV?strike:{})}}>{cat.name}</span>
+              <span style={{fontWeight:500,fontSize:`clamp(.4rem,${sfv}vh,1.1rem)`,lineHeight:1.1,color:isV?"#bbb":T.textSoft,...(isV?strike:{})}}>{box.subtitle}</span>
+            </div>);
+          })}
+        </div>
+      </div>
+    </div>);
+}
+
+/* ═══ APP ROOT ═══ */
+export default function App(){
+  const[games,setGames]=useState(loadGames);const[view,setView]=useState("home");const[activeGameId,setActiveGameId]=useState(null);const[playData,setPlayData]=useState(null);
+  useEffect(()=>{injectFont()},[]);useEffect(()=>{saveGames(games)},[games]);
+  const activeGame=games.find(g=>g.id===activeGameId);
+  const handleCreate=()=>{const g={...JSON.parse(JSON.stringify(DG)),id:uid()};setGames(p=>[g,...p]);setActiveGameId(g.id);setView("editor")};
+  const handleSelect=(id,mode)=>{setActiveGameId(id);if(mode==="play"){setPlayData(games.find(g=>g.id===id));setView("play")}else setView("editor")};
+  const handleDuplicate=id=>{const o=games.find(g=>g.id===id);if(!o)return;setGames(p=>[{...JSON.parse(JSON.stringify(o)),id:uid(),name:o.name+" (copy)"},...p])};
+  const handleDelete=id=>{if(!window.confirm("Delete this game?"))return;setGames(p=>p.filter(g=>g.id!==id))};
+  const handleImport=file=>importGameJSON(file,g=>setGames(p=>[g,...p]));
+  const handleEditorSave=u=>setGames(p=>p.map(g=>g.id===u.id?u:g));
+  const handlePlay=d=>{setPlayData(d);setView("play")};
+
+  if(view==="editor"&&activeGame)return<Editor game={activeGame} onSave={handleEditorSave} onPlay={handlePlay} onBack={()=>setView("home")}/>;
+  if(view==="play"&&playData)return<PlayBoard game={playData} onEdit={()=>setView("editor")} onHome={()=>setView("home")}/>;
+  return<Home games={games} onCreate={handleCreate} onSelect={handleSelect} onDuplicate={handleDuplicate} onDelete={handleDelete} onImport={handleImport}/>;
+}
