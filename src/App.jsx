@@ -383,83 +383,200 @@ function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport}){
 }
 
 /* ═══════════════════════════════════════
-   EDITOR
+   EDITOR — Visual grid-based editor
    ═══════════════════════════════════════ */
 function Editor({game,onSave,onPlay,onBack}){
   const[name,setName]=useState(game.name);
   const[cats,setCats]=useState(game.categories.map(c=>({...c})));
-  const[bxs,setBxs]=useState(game.boxes.map(b=>({...b})));
+  // Boxes stored as a flat grid: boxes[row * cols + col]
   const[cols,setCols]=useState(game.columns);
   const[rws,setRws]=useState(game.rows);
   const[timer,setTimer]=useState(game.timerSeconds||0);
-  const[expandedCat,setExpandedCat]=useState(null);
   const[saved,setSaved]=useState(false);
+  const[editIdx,setEditIdx]=useState(null); // index of cell being edited
+  const[showSettings,setShowSettings]=useState(false);
   const qRef=useRef(null);
 
-  const total=cols*rws;const mismatch=bxs.length!==total;
+  // Build grid-sized box array — fill from game.boxes, pad with empties
+  const total=cols*rws;
+  const initGrid=()=>{
+    const g=[];
+    for(let i=0;i<total;i++){
+      g.push(i<game.boxes.length?{...game.boxes[i]}:{catIdx:0,subtitle:"",question:"",answer:"",imageUrl:"",videoUrl:"",answerImageUrl:""});
+    }
+    return g;
+  };
+  const[grid,setGrid]=useState(initGrid);
+
+  // Resize grid when cols/rows change
+  useEffect(()=>{
+    setGrid(prev=>{
+      const newTotal=cols*rws;
+      const g=[];
+      for(let i=0;i<newTotal;i++){
+        g.push(i<prev.length?{...prev[i]}:{catIdx:0,subtitle:"",question:"",answer:"",imageUrl:"",videoUrl:"",answerImageUrl:""});
+      }
+      return g;
+    });
+    if(editIdx!==null&&editIdx>=cols*rws)setEditIdx(null);
+  },[cols,rws]);
 
   const updateCat=(i,f,v)=>setCats(p=>p.map((c,j)=>j===i?{...c,[f]:v}:c));
   const addCat=()=>setCats(p=>[...p,{name:"New Category",color:PC[p.length%PC.length]}]);
-  const removeCat=idx=>{setCats(p=>p.filter((_,i)=>i!==idx));setBxs(p=>p.filter(b=>b.catIdx!==idx).map(b=>({...b,catIdx:b.catIdx>idx?b.catIdx-1:b.catIdx})));if(expandedCat===idx)setExpandedCat(null);else if(expandedCat>idx)setExpandedCat(expandedCat-1)};
-  const addBox=ci=>setBxs(p=>[...p,{catIdx:ci,subtitle:"",question:"",answer:"",imageUrl:"",videoUrl:"",answerImageUrl:""}]);
-  const updateBox=(i,f,v)=>setBxs(p=>p.map((b,j)=>j===i?{...b,[f]:v}:b));
-  const removeBox=i=>setBxs(p=>p.filter((_,j)=>j!==i));
-  const boxesForCat=ci=>bxs.map((b,i)=>({...b,_i:i})).filter(b=>b.catIdx===ci);
+  const removeCat=idx=>{
+    if(cats.length<=1)return;
+    setCats(p=>p.filter((_,i)=>i!==idx));
+    setGrid(p=>p.map(b=>b.catIdx===idx?{...b,catIdx:0}:b.catIdx>idx?{...b,catIdx:b.catIdx-1}:b));
+  };
+  const updateCell=(i,f,v)=>setGrid(p=>p.map((b,j)=>j===i?{...b,[f]:v}:b));
+  const clearCell=i=>setGrid(p=>p.map((b,j)=>j===i?{catIdx:p[j].catIdx,subtitle:"",question:"",answer:"",imageUrl:"",videoUrl:"",answerImageUrl:""}:b));
+  const swapCells=(a,b)=>setGrid(p=>{const n=[...p];[n[a],n[b]]=[n[b],n[a]];return n});
 
-  const getData=()=>({...game,name,categories:cats,boxes:bxs,columns:cols,rows:rws,timerSeconds:timer});
+  const getData=()=>({...game,name,categories:cats,boxes:grid.slice(0,cols*rws),columns:cols,rows:rws,timerSeconds:timer});
   const handleSave=()=>{onSave(getData());setSaved(true);setTimeout(()=>setSaved(false),1500)};
   const handlePlay=()=>{onSave(getData());onPlay(getData())};
 
-  const lbl={display:"block",fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:2,color:T.textMuted,marginBottom:12};
+  const editBox=editIdx!==null?grid[editIdx]:null;
+  const editCat=editBox?cats[editBox.catIdx]||cats[0]:null;
+
   const inp={padding:"8px 12px",border:`1.5px solid ${T.borderLight}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:T.font,color:T.text,background:T.surfaceAlt};
 
-  return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font}}>
-    <div style={{maxWidth:760,margin:"0 auto",padding:"24px 20px 80px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}><Btn variant="ghost" onClick={()=>{handleSave();onBack()}} style={{fontSize:14}}>← Back</Btn><div style={{display:"flex",gap:8,alignItems:"center"}}>{saved&&<span style={{fontSize:13,color:T.success,fontWeight:600}}>Saved ✓</span>}<Btn onClick={handleSave}>Save</Btn><Btn variant="primary" onClick={handlePlay}>▶ Play</Btn></div></div>
+  // Drag state
+  const[dragIdx,setDragIdx]=useState(null);
 
-      <input value={name} onChange={e=>setName(e.target.value)} placeholder="Game name" style={{width:"100%",border:"none",outline:"none",fontSize:32,fontWeight:800,color:T.text,background:"transparent",padding:"0 0 20px",fontFamily:T.font,borderBottom:`2px solid ${T.borderLight}`,letterSpacing:-.5}}/>
+  const cellFilled=b=>b&&(b.question||b.subtitle||b.answer||b.imageUrl||b.videoUrl||b.answerImageUrl);
 
-      <div style={{marginTop:28}}><label style={lbl}>Grid & Timer</label>
-        <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>
-          {[["Columns",cols,setCols],["Rows",rws,setRws]].map(([l,v,s])=><div key={l} style={{display:"flex",flexDirection:"column",gap:4}}><span style={{fontSize:11,fontWeight:600,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>{l}</span><input type="number" min={1} max={10} value={v} onChange={e=>s(Math.max(1,Math.min(10,+e.target.value||1)))} style={{width:68,padding:"10px 12px",border:`2px solid ${T.border}`,borderRadius:T.radiusSm,fontSize:18,fontWeight:700,textAlign:"center",outline:"none",fontFamily:T.fontMono,background:T.surface}}/></div>).reduce((a,e,i)=>i===0?[e]:[...a,<span key="x" style={{color:T.textMuted,fontSize:20,marginTop:18}}>×</span>,e],[])}
-          <div style={{display:"flex",flexDirection:"column",gap:4,marginLeft:12}}><span style={{fontSize:11,fontWeight:600,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Timer (sec)</span><input type="number" min={0} max={600} value={timer} onChange={e=>setTimer(Math.max(0,Math.min(600,+e.target.value||0)))} style={{width:80,padding:"10px 12px",border:`2px solid ${T.border}`,borderRadius:T.radiusSm,fontSize:18,fontWeight:700,textAlign:"center",outline:"none",fontFamily:T.fontMono,background:T.surface}}/></div>
-          <span style={{fontFamily:T.fontMono,fontSize:13,fontWeight:600,marginTop:20,color:mismatch?T.danger:T.success}}>{total} needed · {bxs.length} created {mismatch?"✗":"✓"}</span>
+  return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font,display:"flex",flexDirection:"column"}}>
+    {/* ─── Top bar ─── */}
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 20px",borderBottom:`1px solid ${T.border}`,background:T.surface,flexShrink:0,gap:8,flexWrap:"wrap"}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        <Btn variant="ghost" onClick={()=>{handleSave();onBack()}} style={{fontSize:13}}>← Back</Btn>
+        <input value={name} onChange={e=>setName(e.target.value)} placeholder="Game name" style={{border:"none",outline:"none",fontSize:20,fontWeight:800,color:T.text,background:"transparent",fontFamily:T.font,width:200,letterSpacing:-.3}}/>
+      </div>
+      <div style={{display:"flex",gap:6,alignItems:"center"}}>
+        {saved&&<span style={{fontSize:12,color:T.success,fontWeight:600}}>Saved ✓</span>}
+        <Btn variant="ghost" onClick={()=>setShowSettings(!showSettings)} style={{fontSize:12}}>⚙ Settings</Btn>
+        <Btn onClick={handleSave} style={{fontSize:13,padding:"8px 18px"}}>Save</Btn>
+        <Btn variant="primary" onClick={handlePlay} style={{fontSize:13,padding:"8px 18px"}}>▶ Play</Btn>
+      </div>
+    </div>
+
+    {/* ─── Settings panel (collapsible) ─── */}
+    {showSettings&&<div style={{padding:"14px 20px",borderBottom:`1px solid ${T.border}`,background:T.surfaceAlt,display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",flexShrink:0}}>
+      {[["Columns",cols,setCols],["Rows",rws,setRws]].map(([l,v,s])=><div key={l} style={{display:"flex",alignItems:"center",gap:6}}>
+        <span style={{fontSize:11,fontWeight:600,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>{l}</span>
+        <input type="number" min={1} max={10} value={v} onChange={e=>s(Math.max(1,Math.min(10,+e.target.value||1)))} style={{width:52,padding:"6px 8px",border:`1.5px solid ${T.border}`,borderRadius:8,fontSize:15,fontWeight:700,textAlign:"center",outline:"none",fontFamily:T.fontMono,background:T.surface}}/>
+      </div>)}
+      <div style={{display:"flex",alignItems:"center",gap:6}}>
+        <span style={{fontSize:11,fontWeight:600,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Timer</span>
+        <input type="number" min={0} max={600} value={timer} onChange={e=>setTimer(Math.max(0,Math.min(600,+e.target.value||0)))} style={{width:60,padding:"6px 8px",border:`1.5px solid ${T.border}`,borderRadius:8,fontSize:15,fontWeight:700,textAlign:"center",outline:"none",fontFamily:T.fontMono,background:T.surface}}/>
+        <span style={{fontSize:11,color:T.textMuted}}>sec</span>
+      </div>
+    </div>}
+
+    {/* ─── Category bar ─── */}
+    <div style={{padding:"10px 20px",borderBottom:`1px solid ${T.border}`,background:T.surface,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",flexShrink:0}}>
+      <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1,marginRight:4}}>Categories</span>
+      {cats.map((cat,ci)=><div key={ci} style={{display:"flex",alignItems:"center",gap:4,background:T.bg,borderRadius:20,padding:"4px 6px 4px 4px",border:`1.5px solid ${T.border}`}}>
+        <input type="color" value={cat.color} onChange={e=>updateCat(ci,"color",e.target.value)} style={{width:20,height:20,border:"none",borderRadius:10,cursor:"pointer",padding:0,flexShrink:0}}/>
+        <input value={cat.name} onChange={e=>updateCat(ci,"name",e.target.value)} style={{border:"none",outline:"none",fontSize:13,fontWeight:600,color:T.text,background:"transparent",width:Math.max(60,cat.name.length*8),fontFamily:T.font}}/>
+        {cats.length>1&&<button onClick={()=>removeCat(ci)} style={{background:"none",border:"none",fontSize:14,color:T.textMuted,cursor:"pointer",lineHeight:1,padding:"0 2px"}}>×</button>}
+      </div>)}
+      <button onClick={addCat} style={{background:"none",border:`1.5px dashed ${T.border}`,borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:600,color:T.textMuted,cursor:"pointer",fontFamily:T.font}}>+</button>
+    </div>
+
+    <div style={{display:"flex",flex:1,minHeight:0,overflow:"hidden"}}>
+      {/* ─── GRID ─── */}
+      <div style={{flex:1,padding:16,overflow:"auto"}}>
+        <div style={{display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,gap:8,maxWidth:900,margin:"0 auto"}}>
+          {grid.slice(0,cols*rws).map((box,i)=>{
+            const cat=cats[box.catIdx]||cats[0]||{name:"?",color:"#999"};
+            const filled=cellFilled(box);
+            const isEditing=editIdx===i;
+            return(<div key={i}
+              draggable
+              onDragStart={()=>setDragIdx(i)}
+              onDragOver={e=>e.preventDefault()}
+              onDrop={()=>{if(dragIdx!==null&&dragIdx!==i){swapCells(dragIdx,i);if(editIdx===dragIdx)setEditIdx(i);else if(editIdx===i)setEditIdx(dragIdx)}setDragIdx(null)}}
+              onClick={()=>setEditIdx(i)}
+              style={{
+                background:isEditing?cat.color+"12":T.surface,
+                border:isEditing?`2px solid ${cat.color}`:`1.5px solid ${filled?T.border:T.borderLight}`,
+                borderLeft:`4px solid ${cat.color}`,
+                borderRadius:12,padding:"12px 10px",cursor:"pointer",
+                minHeight:80,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+                gap:4,transition:"all .15s",position:"relative",
+                opacity:filled?1:0.5,
+              }}>
+              <span style={{fontWeight:800,fontSize:13,color:cat.color,lineHeight:1.1,textAlign:"center"}}>{cat.name}</span>
+              <span style={{fontWeight:500,fontSize:11,color:T.textSoft,lineHeight:1.1,textAlign:"center"}}>{box.subtitle||"—"}</span>
+              {filled&&<div style={{position:"absolute",top:6,right:6,width:7,height:7,borderRadius:4,background:T.success}}/>}
+              {(box.imageUrl||box.answerImageUrl)&&<div style={{position:"absolute",bottom:6,right:6,fontSize:10,color:T.textMuted}}>🖼</div>}
+            </div>);
+          })}
         </div>
+        <p style={{textAlign:"center",color:T.textMuted,fontSize:12,marginTop:12}}>Click a cell to edit · Drag cells to rearrange</p>
       </div>
 
-      <div style={{marginTop:28}}><label style={lbl}>Categories & Questions</label>
-        {cats.map((cat,ci)=><div key={ci} style={{background:T.surface,borderRadius:14,marginBottom:10,border:`1px solid ${T.border}`,overflow:"hidden"}}>
-          <div onClick={()=>setExpandedCat(expandedCat===ci?null:ci)} style={{display:"flex",alignItems:"center",gap:0,padding:"0 14px 0 0",cursor:"pointer",minHeight:52}}>
-            <div style={{width:5,alignSelf:"stretch",background:cat.color,flexShrink:0,borderRadius:"14px 0 0 14px"}}/>
-            <input value={cat.name} onClick={e=>e.stopPropagation()} onChange={e=>updateCat(ci,"name",e.target.value)} style={{flex:1,border:"none",outline:"none",fontSize:15,fontWeight:700,color:T.text,background:"transparent",padding:"14px 0 14px 14px",fontFamily:T.font}} placeholder="Category name"/>
-            <input type="color" value={cat.color} onClick={e=>e.stopPropagation()} onChange={e=>updateCat(ci,"color",e.target.value)} style={{width:26,height:26,border:`2px solid ${T.border}`,borderRadius:8,cursor:"pointer",padding:0,flexShrink:0}}/>
-            <span style={{fontSize:12,fontWeight:700,color:T.textMuted,fontFamily:T.fontMono,background:T.bg,padding:"3px 8px",borderRadius:20,flexShrink:0,margin:"0 8px"}}>{boxesForCat(ci).length}</span>
-            <span style={{color:T.textMuted,fontSize:16,width:20,textAlign:"center",flexShrink:0}}>{expandedCat===ci?"▾":"▸"}</span>
-            {cats.length>1&&<button onClick={e=>{e.stopPropagation();removeCat(ci)}} style={{background:"none",border:"none",fontSize:20,color:T.textMuted,cursor:"pointer",padding:"0 4px",lineHeight:1,flexShrink:0}}>×</button>}
+      {/* ─── DETAIL PANEL (right side) ─── */}
+      {editIdx!==null&&editBox&&<div style={{width:380,borderLeft:`1px solid ${T.border}`,background:T.surface,overflowY:"auto",flexShrink:0,padding:20,display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+          <span style={{fontSize:14,fontWeight:800,color:editCat?.color||T.text}}>Cell {editIdx+1}</span>
+          <div style={{display:"flex",gap:4}}>
+            <button onClick={()=>clearCell(editIdx)} style={{background:"none",border:"none",fontSize:12,color:T.danger,cursor:"pointer",fontFamily:T.font,fontWeight:600}}>Clear</button>
+            <button onClick={()=>setEditIdx(null)} style={{background:"none",border:"none",fontSize:18,color:T.textMuted,cursor:"pointer",lineHeight:1}}>×</button>
           </div>
-          {expandedCat===ci&&<div style={{padding:"8px 16px 16px",borderTop:`1px solid ${T.borderLight}`}}>
-            {boxesForCat(ci).length===0&&<p style={{color:T.textMuted,fontSize:13,fontStyle:"italic",margin:"4px 0 8px"}}>No questions yet</p>}
-            {boxesForCat(ci).map((box,bi)=><div key={box._i} style={{marginBottom:16,padding:"12px",background:T.bg,borderRadius:12,border:`1px solid ${T.borderLight}`}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                <span style={{fontSize:12,fontWeight:800,color:cat.color,fontFamily:T.fontMono,flexShrink:0}}>Q{bi+1}</span>
-                <input value={box.subtitle} onChange={e=>updateBox(box._i,"subtitle",e.target.value)} placeholder="Subtitle" style={{...inp,width:140,flexShrink:0}}/>
-                <div style={{flex:1}}/>
-                <button onClick={()=>removeBox(box._i)} style={{background:"none",border:"none",fontSize:18,color:T.textMuted,cursor:"pointer",padding:"0 4px",lineHeight:1}}>×</button>
-              </div>
-              <div style={{marginBottom:6}}><span style={{fontSize:11,fontWeight:700,color:T.textSoft,textTransform:"uppercase",letterSpacing:1}}>Question</span><FormatBar targetRef={qRef}/><RichInput ref={qRef} value={box.question} onChange={v=>updateBox(box._i,"question",v)} placeholder="Type your question here…" style={{minHeight:80}}/></div>
-              <div style={{marginBottom:6}}><span style={{fontSize:11,fontWeight:700,color:T.success,textTransform:"uppercase",letterSpacing:1}}>Answer</span><RichInput value={box.answer||""} onChange={v=>updateBox(box._i,"answer",v)} placeholder="Answer (revealed on click)" style={{minHeight:50,borderColor:T.success+"44",background:"#f0faf6"}}/></div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                <div style={{flex:1,minWidth:200}}><ImageUpload value={box.imageUrl||""} onChange={v=>updateBox(box._i,"imageUrl",v)} label="🖼 Question Image" color="#1a8faa"/></div>
-                <div style={{flex:1,minWidth:200}}><span style={{fontSize:10,fontWeight:700,color:"#c43040",textTransform:"uppercase",letterSpacing:1}}>▶ YouTube URL</span><input value={box.videoUrl||""} onChange={e=>updateBox(box._i,"videoUrl",e.target.value)} placeholder="https://youtube.com/..." style={{...inp,width:"100%",marginTop:2}}/></div>
-              </div>
-              <div style={{marginTop:6}}><ImageUpload value={box.answerImageUrl||""} onChange={v=>updateBox(box._i,"answerImageUrl",v)} label="🖼 Answer Image" color={T.success} borderColor={T.success+"44"}/></div>
-              {box.videoUrl&&<div style={{marginTop:6}}><MediaPreview videoUrl={box.videoUrl} maxHeight="100px"/></div>}
-            </div>)}
-            <button onClick={()=>addBox(ci)} style={{marginTop:4,background:"none",border:`1.5px dashed ${T.border}`,borderRadius:8,padding:"10px 16px",fontSize:13,fontWeight:600,color:T.textMuted,cursor:"pointer",width:"100%",fontFamily:T.font}}>+ Add question</button>
-          </div>}
-        </div>)}
-        <button onClick={addCat} style={{marginTop:6,background:"none",border:`2px dashed ${T.border}`,borderRadius:14,padding:16,fontSize:14,fontWeight:700,color:T.textMuted,cursor:"pointer",width:"100%",fontFamily:T.font}}>+ Add category</button>
-      </div>
+        </div>
+
+        {/* Category selector */}
+        <div>
+          <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Category</span>
+          <div style={{display:"flex",gap:4,marginTop:4,flexWrap:"wrap"}}>
+            {cats.map((c,ci)=><button key={ci} onClick={()=>updateCell(editIdx,"catIdx",ci)}
+              style={{padding:"5px 10px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",
+                border:editBox.catIdx===ci?`2px solid ${c.color}`:`1.5px solid ${T.border}`,
+                background:editBox.catIdx===ci?c.color+"18":"transparent",
+                color:editBox.catIdx===ci?c.color:T.textSoft,fontFamily:T.font,
+              }}>{c.name}</button>)}
+          </div>
+        </div>
+
+        {/* Subtitle */}
+        <div>
+          <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Subtitle</span>
+          <input value={editBox.subtitle} onChange={e=>updateCell(editIdx,"subtitle",e.target.value)} placeholder="e.g. Easy, Round 1, Topic…" style={{...inp,width:"100%",marginTop:4}}/>
+        </div>
+
+        {/* Question */}
+        <div>
+          <span style={{fontSize:11,fontWeight:700,color:T.textSoft,textTransform:"uppercase",letterSpacing:1}}>Question</span>
+          <FormatBar targetRef={qRef}/>
+          <RichInput ref={qRef} value={editBox.question} onChange={v=>updateCell(editIdx,"question",v)} placeholder="Type your question here…" style={{minHeight:80}}/>
+        </div>
+
+        {/* Answer */}
+        <div>
+          <span style={{fontSize:11,fontWeight:700,color:T.success,textTransform:"uppercase",letterSpacing:1}}>Answer</span>
+          <RichInput value={editBox.answer||""} onChange={v=>updateCell(editIdx,"answer",v)} placeholder="Answer (revealed on click)" style={{minHeight:50,borderColor:T.success+"44",background:"#f0faf6"}}/>
+        </div>
+
+        {/* Media */}
+        <ImageUpload value={editBox.imageUrl||""} onChange={v=>updateCell(editIdx,"imageUrl",v)} label="🖼 Question Image" color="#1a8faa"/>
+
+        <div>
+          <span style={{fontSize:10,fontWeight:700,color:"#c43040",textTransform:"uppercase",letterSpacing:1}}>▶ YouTube URL</span>
+          <input value={editBox.videoUrl||""} onChange={e=>updateCell(editIdx,"videoUrl",e.target.value)} placeholder="https://youtube.com/..." style={{...inp,width:"100%",marginTop:2}}/>
+          {editBox.videoUrl&&<div style={{marginTop:6}}><MediaPreview videoUrl={editBox.videoUrl} maxHeight="100px"/></div>}
+        </div>
+
+        <ImageUpload value={editBox.answerImageUrl||""} onChange={v=>updateCell(editIdx,"answerImageUrl",v)} label="🖼 Answer Image" color={T.success} borderColor={T.success+"44"}/>
+
+        {/* Navigation */}
+        <div style={{display:"flex",gap:6,marginTop:8,borderTop:`1px solid ${T.borderLight}`,paddingTop:12}}>
+          <Btn variant="ghost" onClick={()=>setEditIdx(Math.max(0,editIdx-1))} disabled={editIdx<=0} style={{fontSize:12,flex:1,justifyContent:"center",opacity:editIdx<=0?.3:1}}>← Prev</Btn>
+          <Btn variant="ghost" onClick={()=>setEditIdx(Math.min(cols*rws-1,editIdx+1))} disabled={editIdx>=cols*rws-1} style={{fontSize:12,flex:1,justifyContent:"center",opacity:editIdx>=cols*rws-1?.3:1}}>Next →</Btn>
+        </div>
+      </div>}
     </div>
   </div>);
 }
