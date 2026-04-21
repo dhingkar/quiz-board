@@ -1,7 +1,9 @@
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { auth, googleProvider, db } from "./firebase";
 import { signInWithPopup, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "firebase/auth";
 import { collection, doc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
+const storage = getStorage();
 
 /* ═══ THEME ═══ */
 const PC = ["#d4a017","#c43040","#1a8faa","#6c4dcf","#04a87e","#d4622b","#8b5cf6","#0891b2","#be185d","#65a30d"];
@@ -30,21 +32,8 @@ async function loadGamesFromDB(userId){
   }catch(e){console.error("Load error:",e);return[]}
 }
 async function saveGameToDB(userId,game){
-  try{
-    // Firestore has a 1MB document limit. Check before saving.
-    const size=JSON.stringify(game).length;
-    if(size>1000000){
-      const sizeMB=(size/1024/1024).toFixed(2);
-      alert(`This game is too large to save (${sizeMB}MB). Firestore allows max 1MB per game.\n\nTry removing some images or replacing them with smaller ones.`);
-      return false;
-    }
-    await setDoc(doc(db,"users",userId,"games",game.id),game);
-    return true;
-  }catch(e){
-    console.error("Save error:",e);
-    alert("Failed to save: "+e.message);
-    return false;
-  }
+  try{await setDoc(doc(db,"users",userId,"games",game.id),game)}
+  catch(e){console.error("Save error:",e)}
 }
 async function deleteGameFromDB(userId,gameId){
   try{await deleteDoc(doc(db,"users",userId,"games",gameId))}
@@ -116,7 +105,7 @@ function ImageUpload({value,onChange,label,color,borderColor}){
       const url=URL.createObjectURL(file);
       img.onload=()=>{
         URL.revokeObjectURL(url);
-        const MAX=1280;
+        const MAX=1920;
         let w=img.width,h=img.height;
         if(w>MAX||h>MAX){
           if(w>h){h=Math.round(h*(MAX/w));w=MAX}
@@ -126,8 +115,13 @@ function ImageUpload({value,onChange,label,color,borderColor}){
         canvas.width=w;canvas.height=h;
         const ctx=canvas.getContext("2d");
         ctx.drawImage(img,0,0,w,h);
-        // Always use JPEG for better compression (PNG transparency rarely matters here)
-        const result=canvas.toDataURL("image/jpeg",0.7);
+        // Try JPEG first, fall back to PNG for transparency
+        let result=canvas.toDataURL("image/jpeg",0.82);
+        if(file.type==="image/png"){
+          const pngResult=canvas.toDataURL("image/png");
+          // Use PNG only if it's smaller (rare) or if transparency matters
+          if(pngResult.length<result.length)result=pngResult;
+        }
         resolve(result);
       };
       img.onerror=()=>{
@@ -138,26 +132,44 @@ function ImageUpload({value,onChange,label,color,borderColor}){
       img.src=url;
     });
   };
-        URL.revokeObjectURL(url);
-        // Fallback: read as-is
-        const r=new FileReader();r.onload=ev=>resolve(ev.target.result);r.readAsDataURL(file);
-      };
-      img.src=url;
-    });
-  };
 
-  const handleFile=async(e)=>{
-    const file=e.target.files?.[0];if(!file)return;
-    e.target.value="";
-    setCompressing(true);
-    try{
-      const compressed=await compressImage(file);
-      onChange(compressed);
-    }catch(err){
-      alert("Failed to process image: "+err.message);
+  const handleFile = async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  e.target.value = "";
+  setCompressing(true);
+
+  try {
+    const compressed = await compressImage(file);
+
+    // convert base64 → blob
+    const res = await fetch(compressed);
+    const blob = await res.blob();
+
+    const user = auth.currentUser;
+    if (!user) {
+      alert("You must be logged in to upload images.");
+      setCompressing(false);
+      return;
     }
-    setCompressing(false);
-  };
+
+    const fileRef = ref(
+      storage,
+      `users/${user.uid}/${Date.now()}-${file.name}`
+    );
+
+    await uploadBytes(fileRef, blob);
+    const url = await getDownloadURL(fileRef);
+
+    onChange(url); // ✅ store URL instead of base64
+
+  } catch (err) {
+    alert("Failed to upload image: " + err.message);
+  }
+
+  setCompressing(false);
+};
 
   const sizeKB=isBase64?Math.round(value.length*0.75/1024):0;
 
