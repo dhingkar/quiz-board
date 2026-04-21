@@ -30,8 +30,21 @@ async function loadGamesFromDB(userId){
   }catch(e){console.error("Load error:",e);return[]}
 }
 async function saveGameToDB(userId,game){
-  try{await setDoc(doc(db,"users",userId,"games",game.id),game)}
-  catch(e){console.error("Save error:",e)}
+  try{
+    // Firestore has a 1MB document limit. Check before saving.
+    const size=JSON.stringify(game).length;
+    if(size>1000000){
+      const sizeMB=(size/1024/1024).toFixed(2);
+      alert(`This game is too large to save (${sizeMB}MB). Firestore allows max 1MB per game.\n\nTry removing some images or replacing them with smaller ones.`);
+      return false;
+    }
+    await setDoc(doc(db,"users",userId,"games",game.id),game);
+    return true;
+  }catch(e){
+    console.error("Save error:",e);
+    alert("Failed to save: "+e.message);
+    return false;
+  }
 }
 async function deleteGameFromDB(userId,gameId){
   try{await deleteDoc(doc(db,"users",userId,"games",gameId))}
@@ -103,7 +116,7 @@ function ImageUpload({value,onChange,label,color,borderColor}){
       const url=URL.createObjectURL(file);
       img.onload=()=>{
         URL.revokeObjectURL(url);
-        const MAX=1920;
+        const MAX=1280;
         let w=img.width,h=img.height;
         if(w>MAX||h>MAX){
           if(w>h){h=Math.round(h*(MAX/w));w=MAX}
@@ -113,16 +126,18 @@ function ImageUpload({value,onChange,label,color,borderColor}){
         canvas.width=w;canvas.height=h;
         const ctx=canvas.getContext("2d");
         ctx.drawImage(img,0,0,w,h);
-        // Try JPEG first, fall back to PNG for transparency
-        let result=canvas.toDataURL("image/jpeg",0.82);
-        if(file.type==="image/png"){
-          const pngResult=canvas.toDataURL("image/png");
-          // Use PNG only if it's smaller (rare) or if transparency matters
-          if(pngResult.length<result.length)result=pngResult;
-        }
+        // Always use JPEG for better compression (PNG transparency rarely matters here)
+        const result=canvas.toDataURL("image/jpeg",0.7);
         resolve(result);
       };
       img.onerror=()=>{
+        URL.revokeObjectURL(url);
+        // Fallback: read as-is
+        const r=new FileReader();r.onload=ev=>resolve(ev.target.result);r.readAsDataURL(file);
+      };
+      img.src=url;
+    });
+  };
         URL.revokeObjectURL(url);
         // Fallback: read as-is
         const r=new FileReader();r.onload=ev=>resolve(ev.target.result);r.readAsDataURL(file);
