@@ -1,4 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { auth, googleProvider, db } from "./firebase";
+import { signInWithPopup, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "firebase/auth";
+import { collection, doc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
 
 /* ═══ THEME ═══ */
 const PC = ["#d4a017","#c43040","#1a8faa","#6c4dcf","#04a87e","#d4622b","#8b5cf6","#0891b2","#be185d","#65a30d"];
@@ -15,11 +18,28 @@ const FL="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;7
 function injectFont(){if(!document.querySelector(`link[href*="Outfit"]`)){const l=document.createElement("link");l.rel="stylesheet";l.href=FL;document.head.appendChild(l);}}
 
 /* ═══ HELPERS ═══ */
-function loadGames(){try{const s=localStorage.getItem("qb_games");if(s)return JSON.parse(s)}catch(e){}return[]}
-function saveGames(g){try{localStorage.setItem("qb_games",JSON.stringify(g))}catch(e){}}
 function shuffle(a){const b=[...a];for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]]}return b}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
 function ytId(u){if(!u)return null;const m=u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/);return m?m[1]:null}
+
+/* ═══ FIRESTORE PERSISTENCE ═══ */
+async function loadGamesFromDB(userId){
+  try{
+    const snap=await getDocs(collection(db,"users",userId,"games"));
+    return snap.docs.map(d=>({id:d.id,...d.data()}));
+  }catch(e){console.error("Load error:",e);return[]}
+}
+async function saveGameToDB(userId,game){
+  try{await setDoc(doc(db,"users",userId,"games",game.id),game)}
+  catch(e){console.error("Save error:",e)}
+}
+async function deleteGameFromDB(userId,gameId){
+  try{await deleteDoc(doc(db,"users",userId,"games",gameId))}
+  catch(e){console.error("Delete error:",e)}
+}
+// Fallback localStorage for offline/unauthenticated use
+function loadGamesLocal(){try{const s=localStorage.getItem("qb_games");if(s)return JSON.parse(s)}catch(e){}return[]}
+function saveGamesLocal(g){try{localStorage.setItem("qb_games",JSON.stringify(g))}catch(e){}}
 
 const DG={name:"Untitled Game",columns:5,rows:5,timerSeconds:0,
   categories:PC.slice(0,5).map((c,i)=>({name:`Category ${i+1}`,color:c})),boxes:[]};
@@ -365,12 +385,18 @@ function importGameJSON(file,cb){const r=new FileReader();r.onload=e=>{try{const
 /* ═══════════════════════════════════════
    HOME
    ═══════════════════════════════════════ */
-function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport}){
+function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport,user,onSignOut}){
   const fileRef=useRef(null);
   return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font}}>
     <div style={{maxWidth:800,margin:"0 auto",padding:"48px 24px 80px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:40,flexWrap:"wrap",gap:16}}>
-        <div><h1 style={{fontSize:36,fontWeight:900,color:T.text,letterSpacing:-1.5,margin:0}}>Quiz Board</h1><p style={{color:T.textSoft,fontSize:15,marginTop:6}}>Create and manage your quiz games</p></div>
+        <div><h1 style={{fontSize:36,fontWeight:900,color:T.text,letterSpacing:-1.5,margin:0}}>Quiz Board</h1>
+          {user&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
+            {user.photoURL&&<img src={user.photoURL} alt="" style={{width:24,height:24,borderRadius:12}} referrerPolicy="no-referrer"/>}
+            <span style={{fontSize:13,color:T.textSoft}}>{user.displayName||user.email}</span>
+            <button onClick={onSignOut} style={{background:"none",border:"none",fontSize:12,color:T.textMuted,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Sign out</button>
+          </div>}
+        </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><input ref={fileRef} type="file" accept=".json" style={{display:"none"}} onChange={e=>{if(e.target.files[0]){onImport(e.target.files[0]);e.target.value=""}}}/><Btn onClick={()=>fileRef.current?.click()}>Import JSON</Btn><Btn variant="primary" onClick={onCreate} style={{fontSize:15,padding:"12px 28px"}}>+ New Game</Btn></div>
       </div>
       {games.length===0?(<div style={{textAlign:"center",padding:"80px 20px",background:T.surface,borderRadius:T.radius,border:`1.5px dashed ${T.border}`}}><div style={{fontSize:48,marginBottom:12}}>🎯</div><p style={{fontSize:20,fontWeight:700,color:T.text,margin:0}}>No games yet</p><p style={{color:T.textMuted,fontSize:14,marginTop:6}}>Create your first quiz game to get started</p><Btn variant="primary" onClick={onCreate} style={{marginTop:16}}>+ New Game</Btn></div>):(
@@ -753,20 +779,188 @@ function PlayBoard({game,onEdit,onHome}){
     </div>);
 }
 
+/* ═══ LOGIN SCREEN ═══ */
+function LoginScreen(){
+  const[mode,setMode]=useState("login"); // login, signup, reset
+  const[email,setEmail]=useState("");
+  const[password,setPassword]=useState("");
+  const[displayName,setDisplayName]=useState("");
+  const[loading,setLoading]=useState(false);
+  const[error,setError]=useState(null);
+  const[message,setMessage]=useState(null);
+
+  const handleGoogle=async()=>{
+    setLoading(true);setError(null);
+    try{await signInWithPopup(auth,googleProvider)}
+    catch(e){setError(e.message);setLoading(false)}
+  };
+
+  const handleEmailLogin=async(e)=>{
+    e.preventDefault();setLoading(true);setError(null);
+    try{await signInWithEmailAndPassword(auth,email,password)}
+    catch(e){
+      const msg=e.code==="auth/invalid-credential"?"Invalid email or password"
+        :e.code==="auth/user-not-found"?"No account found with this email"
+        :e.code==="auth/too-many-requests"?"Too many attempts, try again later"
+        :e.message;
+      setError(msg);setLoading(false);
+    }
+  };
+
+  const handleSignUp=async(e)=>{
+    e.preventDefault();setLoading(true);setError(null);
+    if(password.length<6){setError("Password must be at least 6 characters");setLoading(false);return}
+    try{
+      const cred=await createUserWithEmailAndPassword(auth,email,password);
+      if(displayName)await updateProfile(cred.user,{displayName});
+    }catch(e){
+      const msg=e.code==="auth/email-already-in-use"?"An account with this email already exists"
+        :e.code==="auth/weak-password"?"Password is too weak"
+        :e.message;
+      setError(msg);setLoading(false);
+    }
+  };
+
+  const handleReset=async(e)=>{
+    e.preventDefault();setLoading(true);setError(null);setMessage(null);
+    try{await sendPasswordResetEmail(auth,email);setMessage("Password reset email sent! Check your inbox.");setLoading(false)}
+    catch(e){setError(e.code==="auth/user-not-found"?"No account found with this email":e.message);setLoading(false)}
+  };
+
+  const inp={width:"100%",padding:"12px 16px",border:`1.5px solid ${T.border}`,borderRadius:10,fontSize:15,outline:"none",fontFamily:T.font,color:T.text,background:T.surface,marginBottom:10};
+  const link={background:"none",border:"none",fontSize:13,color:"#1a8faa",cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0};
+
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{maxWidth:400,width:"100%",padding:"40px 24px"}}>
+        <h1 style={{fontSize:36,fontWeight:900,color:T.text,letterSpacing:-1.5,margin:0,textAlign:"center"}}>Quiz Board</h1>
+        <p style={{color:T.textSoft,fontSize:15,marginTop:8,marginBottom:28,textAlign:"center"}}>
+          {mode==="login"?"Sign in to your account":mode==="signup"?"Create a new account":"Reset your password"}
+        </p>
+
+        {/* Google sign-in (always visible on login/signup) */}
+        {mode!=="reset"&&<>
+          <button onClick={handleGoogle} disabled={loading}
+            style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,width:"100%",padding:"12px 20px",fontSize:15,fontWeight:700,fontFamily:T.font,cursor:loading?"wait":"pointer",
+              background:T.surface,border:`1.5px solid ${T.border}`,borderRadius:50,color:T.text,transition:"all .15s",boxShadow:"0 2px 8px rgba(0,0,0,.06)",marginBottom:20}}>
+            <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#4285F4" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#34A853" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#EA4335" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+            Continue with Google
+          </button>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:20}}>
+            <div style={{flex:1,height:1,background:T.border}}/><span style={{fontSize:12,color:T.textMuted,fontWeight:600}}>or</span><div style={{flex:1,height:1,background:T.border}}/>
+          </div>
+        </>}
+
+        {/* Email/password form */}
+        <form onSubmit={mode==="login"?handleEmailLogin:mode==="signup"?handleSignUp:handleReset}>
+          {mode==="signup"&&<input value={displayName} onChange={e=>setDisplayName(e.target.value)} placeholder="Your name" style={inp}/>}
+          <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email address" required style={inp}/>
+          {mode!=="reset"&&<input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Password" required minLength={6} style={inp}/>}
+          <button type="submit" disabled={loading}
+            style={{width:"100%",padding:"12px 20px",fontSize:15,fontWeight:700,fontFamily:T.font,cursor:loading?"wait":"pointer",
+              background:T.text,border:"none",borderRadius:50,color:"#fff",transition:"all .15s",marginBottom:12}}>
+            {loading?"Please wait…":mode==="login"?"Sign in":mode==="signup"?"Create account":"Send reset link"}
+          </button>
+        </form>
+
+        {error&&<p style={{color:T.danger,fontSize:13,textAlign:"center",marginBottom:8}}>{error}</p>}
+        {message&&<p style={{color:T.success,fontSize:13,textAlign:"center",marginBottom:8}}>{message}</p>}
+
+        <div style={{textAlign:"center",display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
+          {mode==="login"&&<><button onClick={()=>{setMode("signup");setError(null)}} style={link}>Don't have an account? Sign up</button><button onClick={()=>{setMode("reset");setError(null)}} style={link}>Forgot password?</button></>}
+          {mode==="signup"&&<button onClick={()=>{setMode("login");setError(null)}} style={link}>Already have an account? Sign in</button>}
+          {mode==="reset"&&<button onClick={()=>{setMode("login");setError(null);setMessage(null)}} style={link}>Back to sign in</button>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ═══ APP ROOT ═══ */
 export default function App(){
-  const[games,setGames]=useState(loadGames);const[view,setView]=useState("home");const[activeGameId,setActiveGameId]=useState(null);const[playData,setPlayData]=useState(null);
-  useEffect(()=>{injectFont()},[]);useEffect(()=>{saveGames(games)},[games]);
+  const[user,setUser]=useState(undefined); // undefined=loading, null=logged out, object=logged in
+  const[games,setGames]=useState([]);
+  const[view,setView]=useState("home");
+  const[activeGameId,setActiveGameId]=useState(null);
+  const[playData,setPlayData]=useState(null);
+  const[loading,setLoading]=useState(true);
+
+  useEffect(()=>{injectFont()},[]);
+
+  // Auth listener
+  useEffect(()=>{
+    const unsub=onAuthStateChanged(auth,u=>{setUser(u);if(!u)setLoading(false)});
+    return unsub;
+  },[]);
+
+  // Load games when user signs in
+  useEffect(()=>{
+    if(!user)return;
+    setLoading(true);
+    loadGamesFromDB(user.uid).then(g=>{
+      // Merge any localStorage games on first sign-in
+      const local=loadGamesLocal();
+      if(local.length>0){
+        const existingIds=new Set(g.map(x=>x.id));
+        const newLocal=local.filter(l=>!existingIds.has(l.id));
+        if(newLocal.length>0){
+          const merged=[...g,...newLocal];
+          newLocal.forEach(l=>saveGameToDB(user.uid,l));
+          localStorage.removeItem("qb_games");
+          setGames(merged);setLoading(false);return;
+        }
+      }
+      localStorage.removeItem("qb_games");
+      setGames(g);setLoading(false);
+    });
+  },[user]);
+
   const activeGame=games.find(g=>g.id===activeGameId);
-  const handleCreate=()=>{const g={...JSON.parse(JSON.stringify(DG)),id:uid()};setGames(p=>[g,...p]);setActiveGameId(g.id);setView("editor")};
-  const handleSelect=(id,mode)=>{setActiveGameId(id);if(mode==="play"){setPlayData(games.find(g=>g.id===id));setView("play")}else setView("editor")};
-  const handleDuplicate=id=>{const o=games.find(g=>g.id===id);if(!o)return;setGames(p=>[{...JSON.parse(JSON.stringify(o)),id:uid(),name:o.name+" (copy)"},...p])};
-  const handleDelete=id=>{if(!window.confirm("Delete this game?"))return;setGames(p=>p.filter(g=>g.id!==id))};
-  const handleImport=file=>importGameJSON(file,g=>setGames(p=>[g,...p]));
-  const handleEditorSave=u=>setGames(p=>p.map(g=>g.id===u.id?u:g));
+
+  const handleCreate=()=>{
+    const g={...JSON.parse(JSON.stringify(DG)),id:uid()};
+    setGames(p=>[g,...p]);
+    if(user)saveGameToDB(user.uid,g);
+    setActiveGameId(g.id);setView("editor");
+  };
+  const handleSelect=(id,mode)=>{
+    setActiveGameId(id);
+    if(mode==="play"){setPlayData(games.find(g=>g.id===id));setView("play")}
+    else setView("editor");
+  };
+  const handleDuplicate=id=>{
+    const o=games.find(g=>g.id===id);if(!o)return;
+    const dup={...JSON.parse(JSON.stringify(o)),id:uid(),name:o.name+" (copy)"};
+    setGames(p=>[dup,...p]);
+    if(user)saveGameToDB(user.uid,dup);
+  };
+  const handleDelete=id=>{
+    if(!window.confirm("Delete this game?"))return;
+    setGames(p=>p.filter(g=>g.id!==id));
+    if(user)deleteGameFromDB(user.uid,id);
+  };
+  const handleImport=file=>importGameJSON(file,g=>{
+    setGames(p=>[g,...p]);
+    if(user)saveGameToDB(user.uid,g);
+  });
+  const handleEditorSave=u=>{
+    setGames(p=>p.map(g=>g.id===u.id?u:g));
+    if(user)saveGameToDB(user.uid,u);
+  };
   const handlePlay=d=>{setPlayData(d);setView("play")};
+  const handleSignOut=async()=>{await signOut(auth);setGames([]);setView("home")};
+
+  // Show loading while auth state resolves
+  if(user===undefined||loading)return(
+    <div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <p style={{color:T.textSoft,fontSize:16}}>Loading…</p>
+    </div>
+  );
+
+  // Show login if not signed in
+  if(!user)return<LoginScreen/>;
 
   if(view==="editor"&&activeGame)return<Editor game={activeGame} onSave={handleEditorSave} onPlay={handlePlay} onBack={()=>setView("home")}/>;
   if(view==="play"&&playData)return<PlayBoard game={playData} onEdit={()=>setView("editor")} onHome={()=>setView("home")}/>;
-  return<Home games={games} onCreate={handleCreate} onSelect={handleSelect} onDuplicate={handleDuplicate} onDelete={handleDelete} onImport={handleImport}/>;
+  return<Home games={games} onCreate={handleCreate} onSelect={handleSelect} onDuplicate={handleDuplicate} onDelete={handleDelete} onImport={handleImport} user={user} onSignOut={handleSignOut}/>;
 }
