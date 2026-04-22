@@ -63,7 +63,8 @@ function loadGamesLocal(){try{const s=localStorage.getItem("qb_games");if(s)retu
 function saveGamesLocal(g){try{localStorage.setItem("qb_games",JSON.stringify(g))}catch(e){}}
 
 const DG={name:"Untitled Game",columns:5,rows:5,timerSeconds:0,
-  categories:PC.slice(0,5).map((c,i)=>({name:`Category ${i+1}`,color:c})),boxes:[]};
+  categories:PC.slice(0,5).map((c,i)=>({name:`Category ${i+1}`,color:c})),boxes:[],
+  theme:{bgColor:"",bgImageUrl:"",bgOpacity:1,cellBg:"",cellBorder:""}};
 
 /* ═══ RICH TEXT ═══
    We store HTML strings. The editor uses contentEditable divs.
@@ -327,9 +328,10 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 .fittext-inner{line-height:1.3;color:#1c1917;font-weight:700;letter-spacing:-.5px;word-break:break-word}
 </style></head><body>
 <div class="page" id="gridPage">
-<div class="topbar"><div style="display:flex;align-items:center;gap:8px"><h1>${(game.name||"Quiz").replace(/</g,"&lt;")}</h1></div>
+<div id="bgLayer" style="position:absolute;inset:0;pointer-events:none;z-index:0"></div>
+<div class="topbar" style="position:relative;z-index:1"><div style="display:flex;align-items:center;gap:8px"><h1>${(game.name||"Quiz").replace(/</g,"&lt;")}</h1></div>
 <div style="display:flex;gap:4px"><button class="pill" onclick="scramble()">Scramble</button><button class="pill" style="border-color:#dc2626;color:#dc2626" onclick="resetBoard()">Reset</button><button class="pill" onclick="toggleFS()">⛶</button></div></div>
-<div class="gwrap"><div class="grid" id="grid"></div></div></div>
+<div class="gwrap" style="position:relative;z-index:1"><div class="grid" id="grid"></div></div></div>
 <div class="qpage hidden" id="qPage">
 <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0;width:100%">
 <div class="qcard" id="qCard">
@@ -356,12 +358,20 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 <script>
 const G=${d};
 const cats=G.categories,boxes=G.boxes,COLS=G.columns,ROWS=G.rows,TIMER=G.timerSeconds||0;
+const THEME=G.theme||{};
 let order=boxes.map((_,i)=>i),visited={},curIdx=null,onAnswerPage=false;
 const grid=document.getElementById("grid");
 grid.style.gridTemplateColumns="repeat("+COLS+",1fr)";
 grid.style.gridTemplateRows="repeat("+ROWS+",1fr)";
 grid.style.gap=Math.min(.6,3/ROWS)+"vh "+Math.min(.4,2/COLS)+"vw";
 const cfv=Math.min(2.8,15/ROWS),sfv=Math.min(2,10/ROWS);
+// Apply theme background
+(function applyTheme(){
+  const bg=document.getElementById("bgLayer");if(!bg)return;
+  if(THEME.bgImageUrl){bg.style.background="url("+THEME.bgImageUrl+") center/cover no-repeat"}
+  else if(THEME.bgColor){bg.style.background=THEME.bgColor}
+  bg.style.opacity=THEME.bgOpacity!=null?THEME.bgOpacity:1;
+})();
 let timerInterval=null;
 function yid(u){if(!u)return null;const m=u.match(/(?:youtube\\.com\\/(?:watch\\?v=|embed\\/|shorts\\/)|youtu\\.be\\/)([\\w-]{11})/);return m?m[1]:null}
 function fitText(outerId,innerId,maxPx,minPx){
@@ -374,7 +384,12 @@ function fitText(outerId,innerId,maxPx,minPx){
 function buildGrid(){grid.innerHTML="";order.slice(0,COLS*ROWS).forEach(idx=>{
 const box=idx<boxes.length?boxes[idx]:null;const d=document.createElement("div");d.className="cell"+(visited[idx]?" v":"");
 if(!box){d.style.opacity="0.06";grid.appendChild(d);return}
-const cat=cats[box.catIdx]||{name:"?",color:"#999"};d.style.borderLeft="4px solid "+cat.color;
+const cat=cats[box.catIdx]||{name:"?",color:"#999"};
+const cellBg=box.bgOverride||THEME.cellBg||"#fff";
+const borderColor=box.borderOverride||cat.color;
+const outerBorder=box.borderOverride||THEME.cellBorder||"#e6e4df";
+if(!visited[idx]){d.style.background=cellBg;d.style.border="1px solid "+outerBorder}
+d.style.borderLeft="4px solid "+borderColor;
 const c=document.createElement("span");c.style.cssText="font-weight:800;font-size:clamp(0.55rem,"+cfv+"vh,1.8rem);line-height:1.1;letter-spacing:-0.3px;color:"+(visited[idx]?"#999":cat.color);c.textContent=cat.name;
 const s=document.createElement("span");s.style.cssText="font-weight:500;font-size:clamp(0.4rem,"+sfv+"vh,1.1rem);line-height:1.1;color:"+(visited[idx]?"#bbb":"#78716c");s.textContent=box.subtitle;
 d.appendChild(c);d.appendChild(s);
@@ -508,10 +523,13 @@ function Editor({game,onSave,onPlay,onBack}){
   const[cols,setCols]=useState(game.columns);
   const[rws,setRws]=useState(game.rows);
   const[timer,setTimer]=useState(game.timerSeconds||0);
+  const[theme,setTheme]=useState(game.theme||{bgColor:"",bgImageUrl:"",bgOpacity:1,cellBg:"",cellBorder:""});
   const[saved,setSaved]=useState(false);
   const[editIdx,setEditIdx]=useState(null); // index of cell being edited
   const[showSettings,setShowSettings]=useState(false);
+  const[showTheme,setShowTheme]=useState(false);
   const qRef=useRef(null);
+  const updateTheme=(f,v)=>setTheme(p=>({...p,[f]:v}));
 
   // Build grid-sized box array — fill from game.boxes, pad with empties
   const total=cols*rws;
@@ -548,7 +566,7 @@ function Editor({game,onSave,onPlay,onBack}){
   const clearCell=i=>setGrid(p=>p.map((b,j)=>j===i?{catIdx:p[j].catIdx,subtitle:"",question:"",answer:"",imageUrl:"",videoUrl:"",answerImageUrl:""}:b));
   const swapCells=(a,b)=>setGrid(p=>{const n=[...p];[n[a],n[b]]=[n[b],n[a]];return n});
 
-  const getData=()=>({...game,name,categories:cats,boxes:grid.slice(0,cols*rws),columns:cols,rows:rws,timerSeconds:timer});
+  const getData=()=>({...game,name,categories:cats,boxes:grid.slice(0,cols*rws),columns:cols,rows:rws,timerSeconds:timer,theme});
   const handleSave=()=>{onSave(getData());setSaved(true);setTimeout(()=>setSaved(false),1500)};
   const handlePlay=()=>{onSave(getData());onPlay(getData())};
 
@@ -571,7 +589,8 @@ function Editor({game,onSave,onPlay,onBack}){
       </div>
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
         {saved&&<span style={{fontSize:12,color:T.success,fontWeight:600}}>Saved ✓</span>}
-        <Btn variant="ghost" onClick={()=>setShowSettings(!showSettings)} style={{fontSize:12}}>⚙ Settings</Btn>
+        <Btn variant="ghost" onClick={()=>{setShowSettings(!showSettings);if(showTheme)setShowTheme(false)}} style={{fontSize:12}}>⚙ Settings</Btn>
+        <Btn variant="ghost" onClick={()=>{setShowTheme(!showTheme);if(showSettings)setShowSettings(false)}} style={{fontSize:12}}>🎨 Theme</Btn>
         <Btn onClick={handleSave} style={{fontSize:13,padding:"8px 18px"}}>Save</Btn>
         <Btn variant="primary" onClick={handlePlay} style={{fontSize:13,padding:"8px 18px"}}>▶ Play</Btn>
       </div>
@@ -590,6 +609,46 @@ function Editor({game,onSave,onPlay,onBack}){
       </div>
     </div>}
 
+    {/* ─── Theme panel (collapsible) ─── */}
+    {showTheme&&<div style={{padding:"14px 20px",borderBottom:`1px solid ${T.border}`,background:T.surfaceAlt,flexShrink:0}}>
+      <div style={{display:"flex",gap:24,alignItems:"flex-start",flexWrap:"wrap"}}>
+        {/* Background */}
+        <div style={{display:"flex",flexDirection:"column",gap:8,minWidth:220}}>
+          <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Background</span>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:12,color:T.textSoft,width:52}}>Color</span>
+            <input type="color" value={theme.bgColor||"#f4f3f0"} onChange={e=>updateTheme("bgColor",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
+            {theme.bgColor&&<button onClick={()=>updateTheme("bgColor","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font}}>Reset</button>}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:12,color:T.textSoft,width:52}}>Image</span>
+            <div style={{flex:1}}><ImageUpload value={theme.bgImageUrl||""} onChange={v=>updateTheme("bgImageUrl",v)} label="" color={T.textSoft}/></div>
+          </div>
+          {(theme.bgImageUrl||theme.bgColor)&&<div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:12,color:T.textSoft,width:52}}>Opacity</span>
+            <input type="range" min={0.1} max={1} step={0.05} value={theme.bgOpacity??1} onChange={e=>updateTheme("bgOpacity",parseFloat(e.target.value))} style={{flex:1}}/>
+            <span style={{fontSize:11,fontFamily:T.fontMono,color:T.textMuted,width:36,textAlign:"right"}}>{Math.round((theme.bgOpacity??1)*100)}%</span>
+          </div>}
+        </div>
+
+        {/* Bulk cell colors */}
+        <div style={{display:"flex",flexDirection:"column",gap:8,minWidth:220}}>
+          <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>All Cells</span>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:12,color:T.textSoft,width:52}}>Fill</span>
+            <input type="color" value={theme.cellBg||"#ffffff"} onChange={e=>updateTheme("cellBg",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
+            {theme.cellBg&&<button onClick={()=>updateTheme("cellBg","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font}}>Reset</button>}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:12,color:T.textSoft,width:52}}>Border</span>
+            <input type="color" value={theme.cellBorder||"#e6e4df"} onChange={e=>updateTheme("cellBorder",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
+            {theme.cellBorder&&<button onClick={()=>updateTheme("cellBorder","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font}}>Reset</button>}
+          </div>
+          <p style={{fontSize:11,color:T.textMuted,margin:0}}>Per-cell overrides (set in cell editor) take priority</p>
+        </div>
+      </div>
+    </div>}
+
     {/* ─── Category bar ─── */}
     <div style={{padding:"10px 20px",borderBottom:`1px solid ${T.border}`,background:T.surface,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",flexShrink:0}}>
       <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1,marginRight:4}}>Categories</span>
@@ -601,14 +660,19 @@ function Editor({game,onSave,onPlay,onBack}){
       <button onClick={addCat} style={{background:"none",border:`1.5px dashed ${T.border}`,borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:600,color:T.textMuted,cursor:"pointer",fontFamily:T.font}}>+</button>
     </div>
 
-    <div style={{display:"flex",flex:1,minHeight:0,overflow:"hidden"}}>
+    <div style={{display:"flex",flex:1,minHeight:0,overflow:"hidden",position:"relative"}}>
+      {/* Background image/color */}
+      {(theme.bgImageUrl||theme.bgColor)&&<div style={{position:"absolute",inset:0,background:theme.bgImageUrl?`url(${theme.bgImageUrl}) center/cover no-repeat`:theme.bgColor,opacity:theme.bgOpacity??1,pointerEvents:"none",zIndex:0}}/>}
       {/* ─── GRID ─── */}
-      <div style={{flex:1,padding:16,overflow:"auto"}}>
+      <div style={{flex:1,padding:16,overflow:"auto",position:"relative",zIndex:1}}>
         <div style={{display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,gap:8,maxWidth:900,margin:"0 auto"}}>
           {grid.slice(0,cols*rws).map((box,i)=>{
             const cat=cats[box.catIdx]||cats[0]||{name:"?",color:"#999"};
             const filled=cellFilled(box);
             const isEditing=editIdx===i;
+            const cellBg=box.bgOverride||theme.cellBg||T.surface;
+            const borderColor=box.borderOverride||cat.color;
+            const outerBorder=box.borderOverride||theme.cellBorder||T.border;
             return(<div key={i}
               draggable
               onDragStart={()=>setDragIdx(i)}
@@ -616,18 +680,19 @@ function Editor({game,onSave,onPlay,onBack}){
               onDrop={()=>{if(dragIdx!==null&&dragIdx!==i){swapCells(dragIdx,i);if(editIdx===dragIdx)setEditIdx(i);else if(editIdx===i)setEditIdx(dragIdx)}setDragIdx(null)}}
               onClick={()=>setEditIdx(i)}
               style={{
-                background:isEditing?cat.color+"12":T.surface,
-                border:isEditing?`2px solid ${cat.color}`:`1.5px solid ${filled?T.border:T.borderLight}`,
-                borderLeft:`4px solid ${cat.color}`,
+                background:isEditing?cat.color+"12":cellBg,
+                border:isEditing?`2px solid ${cat.color}`:`1.5px solid ${filled?outerBorder:T.borderLight}`,
+                borderLeft:`4px solid ${borderColor}`,
                 borderRadius:12,padding:"12px 10px",cursor:"pointer",
                 minHeight:80,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
                 gap:4,transition:"all .15s",position:"relative",
-                opacity:filled?1:0.5,
+                opacity:filled?1:0.6,
               }}>
               <span style={{fontWeight:800,fontSize:13,color:cat.color,lineHeight:1.1,textAlign:"center"}}>{cat.name}</span>
               <span style={{fontWeight:500,fontSize:11,color:T.textSoft,lineHeight:1.1,textAlign:"center"}}>{box.subtitle||"—"}</span>
               {filled&&<div style={{position:"absolute",top:6,right:6,width:7,height:7,borderRadius:4,background:T.success}}/>}
               {(box.imageUrl||box.answerImageUrl)&&<div style={{position:"absolute",bottom:6,right:6,fontSize:10,color:T.textMuted}}>🖼</div>}
+              {(box.bgOverride||box.borderOverride)&&<div style={{position:"absolute",top:6,left:10,fontSize:9,color:T.textMuted}}>🎨</div>}
             </div>);
           })}
         </div>
@@ -686,6 +751,21 @@ function Editor({game,onSave,onPlay,onBack}){
         </div>
 
         <ImageUpload value={editBox.answerImageUrl||""} onChange={v=>updateCell(editIdx,"answerImageUrl",v)} label="🖼 Answer Image" color={T.success} borderColor={T.success+"44"}/>
+
+        {/* Per-cell color overrides */}
+        <div style={{marginTop:6,paddingTop:10,borderTop:`1px solid ${T.borderLight}`}}>
+          <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Cell Colors (override)</span>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+            <span style={{fontSize:12,color:T.textSoft,width:52}}>Fill</span>
+            <input type="color" value={editBox.bgOverride||theme.cellBg||"#ffffff"} onChange={e=>updateCell(editIdx,"bgOverride",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
+            {editBox.bgOverride&&<button onClick={()=>updateCell(editIdx,"bgOverride","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font}}>Reset</button>}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+            <span style={{fontSize:12,color:T.textSoft,width:52}}>Border</span>
+            <input type="color" value={editBox.borderOverride||editCat?.color||"#999"} onChange={e=>updateCell(editIdx,"borderOverride",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
+            {editBox.borderOverride&&<button onClick={()=>updateCell(editIdx,"borderOverride","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font}}>Reset</button>}
+          </div>
+        </div>
 
         {/* Navigation */}
         <div style={{display:"flex",gap:6,marginTop:8,borderTop:`1px solid ${T.borderLight}`,paddingTop:12}}>
@@ -838,9 +918,12 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   }
 
   // Grid view
+  const theme=game.theme||{};
   return(
     <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1vh 1.5vw",background:T.bg,fontFamily:T.font,overflow:"hidden"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,flexWrap:"nowrap",gap:6,marginBottom:"0.6vh"}}>
+      {/* Background layer */}
+      {(theme.bgImageUrl||theme.bgColor)&&<div style={{position:"absolute",inset:0,background:theme.bgImageUrl?`url(${theme.bgImageUrl}) center/cover no-repeat`:theme.bgColor,opacity:theme.bgOpacity??1,pointerEvents:"none",zIndex:0}}/>}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,flexWrap:"nowrap",gap:6,marginBottom:"0.6vh",position:"relative",zIndex:1}}>
         <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}><Btn variant="ghost" onClick={onHome} style={{fontSize:12,padding:"5px 8px"}}>{guestMode?"✕ Exit":"← Home"}</Btn><h1 style={{fontSize:"2.4vh",fontWeight:800,letterSpacing:-.5,color:T.text,margin:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{game.name}</h1>{guestMode&&<span style={{fontSize:10,fontWeight:700,color:T.success,background:T.success+"14",padding:"2px 6px",borderRadius:10,letterSpacing:.5,textTransform:"uppercase",flexShrink:0}}>🌐 Shared</span>}</div>
         <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
           <Btn onClick={doScramble} style={{borderColor:"#1a8faa",color:"#1a8faa",fontSize:12,padding:"6px 12px"}}>Scramble</Btn>
@@ -850,16 +933,19 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           <SettingsDropdown showSB={showSB} setShowSB={setShowSB} pointStep={pointStep} setPointStep={setPointStep} autoFit={autoFit} setAutoFit={setAutoFit}/>
         </div>
       </div>
-      {showSB&&<div style={{flexShrink:0,marginBottom:"0.4vh"}}><Scoreboard scores={scores} setScores={setScores} pointStep={pointStep}/></div>}
-      <div style={{flex:1,position:"relative",minHeight:0}}>
+      {showSB&&<div style={{flexShrink:0,marginBottom:"0.4vh",position:"relative",zIndex:1}}><Scoreboard scores={scores} setScores={setScores} pointStep={pointStep}/></div>}
+      <div style={{flex:1,position:"relative",minHeight:0,zIndex:1}}>
         <div style={{position:"absolute",inset:0,display:"grid",gridTemplateColumns:`repeat(${columns},1fr)`,gridTemplateRows:`repeat(${rows},1fr)`,gap:`${Math.min(.6,3/rows)}vh ${Math.min(.4,2/columns)}vw`}}>
           {order.slice(0,total).map(origIdx=>{
             const box=origIdx<boxes.length?boxes[origIdx]:null;const isV=visited[origIdx];
             if(!box)return<div key={origIdx} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,opacity:.06}}/>;
             const cat=categories[box.catIdx]||{name:"?",color:"#999"};
+            const cellBg=box.bgOverride||theme.cellBg||T.surface;
+            const borderColor=box.borderOverride||cat.color;
+            const outerBorder=box.borderOverride||theme.cellBorder||T.border;
             return(<div key={origIdx} onClick={()=>!isV&&openQuestion(origIdx)}
               onContextMenu={e=>{e.preventDefault();if(isV)unvisit(origIdx)}}
-              style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,borderLeft:`4px solid ${cat.color}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"0.3vh",transition:"transform .12s,box-shadow .12s,opacity .2s",userSelect:"none",overflow:"hidden",...(isV?{opacity:.2,background:"#e5e4e0",cursor:"context-menu"}:{cursor:"pointer"})}}>
+              style={{background:cellBg,border:`1px solid ${outerBorder}`,borderRadius:10,borderLeft:`4px solid ${borderColor}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"0.3vh",transition:"transform .12s,box-shadow .12s,opacity .2s",userSelect:"none",overflow:"hidden",...(isV?{opacity:.2,background:"#e5e4e0",cursor:"context-menu"}:{cursor:"pointer"})}}>
               <span style={{fontWeight:800,fontSize:`clamp(.55rem,${cfv}vh,1.8rem)`,lineHeight:1.1,letterSpacing:-.3,color:isV?"#999":cat.color,...(isV?strike:{})}}>{cat.name}</span>
               <span style={{fontWeight:500,fontSize:`clamp(.4rem,${sfv}vh,1.1rem)`,lineHeight:1.1,color:isV?"#bbb":T.textSoft,...(isV?strike:{})}}>{box.subtitle}</span>
             </div>);
