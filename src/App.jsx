@@ -2,7 +2,7 @@ import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { auth, googleProvider, db } from "./firebase";
 import { signInWithPopup, signOut, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile } from "firebase/auth";
-import { collection, doc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, setDoc, deleteDoc } from "firebase/firestore";
 const storage = getStorage();
 
 /* ═══ THEME ═══ */
@@ -38,6 +38,25 @@ async function saveGameToDB(userId,game){
 async function deleteGameFromDB(userId,gameId){
   try{await deleteDoc(doc(db,"users",userId,"games",gameId))}
   catch(e){console.error("Delete error:",e)}
+}
+// Public sharing
+async function publishGame(userId,game){
+  try{
+    const publicGame={...game,_ownerId:userId,_publishedAt:Date.now()};
+    await setDoc(doc(db,"public",game.id),publicGame);
+    return true;
+  }catch(e){console.error("Publish error:",e);alert("Failed to publish: "+e.message);return false}
+}
+async function unpublishGame(gameId){
+  try{await deleteDoc(doc(db,"public",gameId));return true}
+  catch(e){console.error("Unpublish error:",e);return false}
+}
+async function loadPublicGame(gameId){
+  try{
+    const snap=await getDoc(doc(db,"public",gameId));
+    if(snap.exists())return{id:snap.id,...snap.data()};
+    return null;
+  }catch(e){console.error("Load public error:",e);return null}
 }
 // Fallback localStorage for offline/unauthenticated use
 function loadGamesLocal(){try{const s=localStorage.getItem("qb_games");if(s)return JSON.parse(s)}catch(e){}return[]}
@@ -412,8 +431,11 @@ function importGameJSON(file,cb){const r=new FileReader();r.onload=e=>{try{const
 /* ═══════════════════════════════════════
    HOME
    ═══════════════════════════════════════ */
-function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport,user,onSignOut}){
+function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport,user,onSignOut,publishedIds,onPublish,onUnpublish}){
   const fileRef=useRef(null);
+  const[shareId,setShareId]=useState(null);
+  const shareUrl=shareId?`${window.location.origin}${window.location.pathname}?game=${shareId}`:"";
+  const copyShareLink=()=>{navigator.clipboard.writeText(shareUrl);alert("Link copied to clipboard!")};
   return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font}}>
     <div style={{maxWidth:800,margin:"0 auto",padding:"48px 24px 80px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:40,flexWrap:"wrap",gap:16}}>
@@ -426,11 +448,52 @@ function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport,user,onSign
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><input ref={fileRef} type="file" accept=".json" style={{display:"none"}} onChange={e=>{if(e.target.files[0]){onImport(e.target.files[0]);e.target.value=""}}}/><Btn onClick={()=>fileRef.current?.click()}>Import JSON</Btn><Btn variant="primary" onClick={onCreate} style={{fontSize:15,padding:"12px 28px"}}>+ New Game</Btn></div>
       </div>
+
+      {/* Share link modal */}
+      {shareId&&<div onClick={()=>setShareId(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:20}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:T.surface,borderRadius:16,padding:28,maxWidth:500,width:"100%",boxShadow:"0 20px 60px rgba(0,0,0,.2)"}}>
+          <h3 style={{fontSize:20,fontWeight:800,color:T.text,margin:0,marginBottom:8}}>🌐 Game is published!</h3>
+          <p style={{fontSize:13,color:T.textSoft,marginBottom:16}}>Anyone with this link can play your game — no sign in required.</p>
+          <div style={{display:"flex",gap:8,marginBottom:16}}>
+            <input readOnly value={shareUrl} onClick={e=>e.target.select()} style={{flex:1,padding:"10px 12px",border:`1.5px solid ${T.border}`,borderRadius:8,fontSize:12,outline:"none",fontFamily:T.fontMono,background:T.surfaceAlt,color:T.text}}/>
+            <Btn variant="primary" onClick={copyShareLink} style={{fontSize:13,padding:"10px 16px"}}>Copy</Btn>
+          </div>
+          <p style={{fontSize:12,color:T.textMuted,marginBottom:16}}>Note: Changes you make won't update the public version until you click Publish again.</p>
+          <div style={{textAlign:"right"}}><Btn variant="ghost" onClick={()=>setShareId(null)}>Close</Btn></div>
+        </div>
+      </div>}
+
       {games.length===0?(<div style={{textAlign:"center",padding:"80px 20px",background:T.surface,borderRadius:T.radius,border:`1.5px dashed ${T.border}`}}><div style={{fontSize:48,marginBottom:12}}>🎯</div><p style={{fontSize:20,fontWeight:700,color:T.text,margin:0}}>No games yet</p><p style={{color:T.textMuted,fontSize:14,marginTop:6}}>Create your first quiz game to get started</p><Btn variant="primary" onClick={onCreate} style={{marginTop:16}}>+ New Game</Btn></div>):(
-        <div style={{display:"flex",flexDirection:"column",gap:12}}>{games.map(g=>(<div key={g.id} style={{background:T.surface,borderRadius:T.radius,border:`1px solid ${T.border}`,overflow:"hidden"}}>
-          <div style={{padding:"20px 24px 14px",cursor:"pointer"}} onClick={()=>onSelect(g.id,"edit")}><div style={{display:"flex",gap:5,marginBottom:10}}>{g.categories.slice(0,8).map((c,ci)=><div key={ci} style={{width:10,height:10,borderRadius:5,background:c.color}}/>)}</div><h3 style={{fontSize:18,fontWeight:700,color:T.text,margin:0}}>{g.name}</h3><p style={{fontSize:13,color:T.textMuted,marginTop:4,fontFamily:T.fontMono}}>{g.columns}×{g.rows} · {g.categories.length} cat · {g.boxes.length} Q{g.timerSeconds?` · ${g.timerSeconds}s timer`:""}</p></div>
-          <div style={{display:"flex",alignItems:"center",gap:4,padding:"8px 16px 14px",borderTop:`1px solid ${T.borderLight}`,flexWrap:"wrap"}}><Btn variant="primary" onClick={()=>onSelect(g.id,"play")} style={{fontSize:13,padding:"8px 20px"}}>▶ Play</Btn><Btn variant="ghost" onClick={()=>onSelect(g.id,"edit")} style={{fontSize:13}}>✎ Edit</Btn><Btn variant="ghost" onClick={()=>onDuplicate(g.id)} style={{fontSize:13}}>⧉ Dup</Btn><Btn variant="ghost" onClick={()=>exportGameHTML(g)} style={{fontSize:13}}>⤓ HTML</Btn><Btn variant="ghost" onClick={()=>exportGameJSON(g)} style={{fontSize:13}}>⤓ JSON</Btn><div style={{flex:1}}/><Btn variant="danger" onClick={()=>onDelete(g.id)} style={{fontSize:12,padding:"6px 12px"}}>Delete</Btn></div>
-        </div>))}</div>)}
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>{games.map(g=>{
+          const isPublished=publishedIds?.has(g.id);
+          return(<div key={g.id} style={{background:T.surface,borderRadius:T.radius,border:`1px solid ${T.border}`,overflow:"hidden"}}>
+            <div style={{padding:"20px 24px 14px",cursor:"pointer"}} onClick={()=>onSelect(g.id,"edit")}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <div style={{display:"flex",gap:5,flex:1}}>{g.categories.slice(0,8).map((c,ci)=><div key={ci} style={{width:10,height:10,borderRadius:5,background:c.color}}/>)}</div>
+                {isPublished&&<span style={{fontSize:10,fontWeight:700,color:T.success,background:T.success+"14",padding:"3px 8px",borderRadius:20,letterSpacing:.5,textTransform:"uppercase"}}>🌐 Public</span>}
+              </div>
+              <h3 style={{fontSize:18,fontWeight:700,color:T.text,margin:0}}>{g.name}</h3>
+              <p style={{fontSize:13,color:T.textMuted,marginTop:4,fontFamily:T.fontMono}}>{g.columns}×{g.rows} · {g.categories.length} cat · {g.boxes.length} Q{g.timerSeconds?` · ${g.timerSeconds}s timer`:""}</p>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:4,padding:"8px 16px 14px",borderTop:`1px solid ${T.borderLight}`,flexWrap:"wrap"}}>
+              <Btn variant="primary" onClick={()=>onSelect(g.id,"play")} style={{fontSize:13,padding:"8px 20px"}}>▶ Play</Btn>
+              <Btn variant="ghost" onClick={()=>onSelect(g.id,"edit")} style={{fontSize:13}}>✎ Edit</Btn>
+              <Btn variant="ghost" onClick={()=>onDuplicate(g.id)} style={{fontSize:13}}>⧉ Dup</Btn>
+              {isPublished
+                ?<>
+                  <Btn variant="ghost" onClick={()=>{onPublish(g);setShareId(g.id)}} style={{fontSize:13,color:T.success}} title="Update public version">↻ Republish</Btn>
+                  <Btn variant="ghost" onClick={()=>setShareId(g.id)} style={{fontSize:13}}>🔗 Share</Btn>
+                  <Btn variant="ghost" onClick={()=>onUnpublish(g.id)} style={{fontSize:12,color:T.textMuted}}>Unpublish</Btn>
+                </>
+                :<Btn variant="ghost" onClick={async()=>{const ok=await onPublish(g);if(ok)setShareId(g.id)}} style={{fontSize:13,color:T.success}}>🌐 Publish</Btn>
+              }
+              <Btn variant="ghost" onClick={()=>exportGameHTML(g)} style={{fontSize:13}}>⤓ HTML</Btn>
+              <Btn variant="ghost" onClick={()=>exportGameJSON(g)} style={{fontSize:13}}>⤓ JSON</Btn>
+              <div style={{flex:1}}/>
+              <Btn variant="danger" onClick={()=>onDelete(g.id)} style={{fontSize:12,padding:"6px 12px"}}>Delete</Btn>
+            </div>
+          </div>);
+        })}</div>)}
     </div>
   </div>);
 }
@@ -637,7 +700,7 @@ function Editor({game,onSave,onPlay,onBack}){
 /* ═══════════════════════════════════════
    PLAY MODE
    ═══════════════════════════════════════ */
-function PlayBoard({game,onEdit,onHome}){
+function PlayBoard({game,onEdit,onHome,guestMode}){
   const{categories,boxes,columns,rows,timerSeconds}=game;
   const[order,setOrder]=useState(()=>boxes.map((_,i)=>i));
   const[visited,setVisited]=useState({});
@@ -778,12 +841,12 @@ function PlayBoard({game,onEdit,onHome}){
   return(
     <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1vh 1.5vw",background:T.bg,fontFamily:T.font,overflow:"hidden"}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,flexWrap:"nowrap",gap:6,marginBottom:"0.6vh"}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}><Btn variant="ghost" onClick={onHome} style={{fontSize:12,padding:"5px 8px"}}>← Home</Btn><h1 style={{fontSize:"2.4vh",fontWeight:800,letterSpacing:-.5,color:T.text,margin:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{game.name}</h1></div>
+        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}><Btn variant="ghost" onClick={onHome} style={{fontSize:12,padding:"5px 8px"}}>{guestMode?"✕ Exit":"← Home"}</Btn><h1 style={{fontSize:"2.4vh",fontWeight:800,letterSpacing:-.5,color:T.text,margin:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{game.name}</h1>{guestMode&&<span style={{fontSize:10,fontWeight:700,color:T.success,background:T.success+"14",padding:"2px 6px",borderRadius:10,letterSpacing:.5,textTransform:"uppercase",flexShrink:0}}>🌐 Shared</span>}</div>
         <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
           <Btn onClick={doScramble} style={{borderColor:"#1a8faa",color:"#1a8faa",fontSize:12,padding:"6px 12px"}}>Scramble</Btn>
           <Btn onClick={reset} style={{borderColor:T.danger,color:T.danger,fontSize:12,padding:"6px 12px"}}>Reset</Btn>
           <Btn variant="ghost" onClick={toggleFS} style={{fontSize:12,padding:"6px 8px"}}>⛶</Btn>
-          <Btn variant="ghost" onClick={onEdit} style={{fontSize:12,padding:"6px 8px"}}>✎</Btn>
+          {!guestMode&&<Btn variant="ghost" onClick={onEdit} style={{fontSize:12,padding:"6px 8px"}}>✎</Btn>}
           <SettingsDropdown showSB={showSB} setShowSB={setShowSB} pointStep={pointStep} setPointStep={setPointStep} autoFit={autoFit} setAutoFit={setAutoFit}/>
         </div>
       </div>
@@ -907,16 +970,40 @@ function LoginScreen(){
 export default function App(){
   const[user,setUser]=useState(undefined); // undefined=loading, null=logged out, object=logged in
   const[games,setGames]=useState([]);
+  const[publishedIds,setPublishedIds]=useState(new Set());
   const[view,setView]=useState("home");
   const[activeGameId,setActiveGameId]=useState(null);
   const[playData,setPlayData]=useState(null);
   const[loading,setLoading]=useState(true);
+  const[guestMode,setGuestMode]=useState(false); // true if viewing a public game without login
 
   useEffect(()=>{injectFont()},[]);
 
+  // Check URL for public game link on initial load
+  useEffect(()=>{
+    const params=new URLSearchParams(window.location.search);
+    const publicGameId=params.get("game");
+    if(publicGameId){
+      setLoading(true);
+      loadPublicGame(publicGameId).then(g=>{
+        if(g){
+          setPlayData(g);setView("play");setGuestMode(true);setLoading(false);
+        }else{
+          alert("This game is no longer available.");
+          window.history.replaceState({},"",window.location.pathname);
+          setLoading(false);
+        }
+      });
+    }
+  },[]);
+
   // Auth listener
   useEffect(()=>{
-    const unsub=onAuthStateChanged(auth,u=>{setUser(u);if(!u)setLoading(false)});
+    const unsub=onAuthStateChanged(auth,u=>{
+      setUser(u);
+      // Don't set loading false here if we're loading a public game
+      if(!u&&!new URLSearchParams(window.location.search).get("game"))setLoading(false);
+    });
     return unsub;
   },[]);
 
@@ -924,7 +1011,11 @@ export default function App(){
   useEffect(()=>{
     if(!user)return;
     setLoading(true);
-    loadGamesFromDB(user.uid).then(g=>{
+    Promise.all([
+      loadGamesFromDB(user.uid),
+      getDocs(collection(db,"public")).then(s=>new Set(s.docs.filter(d=>d.data()._ownerId===user.uid).map(d=>d.id))).catch(()=>new Set())
+    ]).then(([g,pubs])=>{
+      setPublishedIds(pubs);
       // Merge any localStorage games on first sign-in
       const local=loadGamesLocal();
       if(local.length>0){
@@ -965,6 +1056,11 @@ export default function App(){
     if(!window.confirm("Delete this game?"))return;
     setGames(p=>p.filter(g=>g.id!==id));
     if(user)deleteGameFromDB(user.uid,id);
+    // Also unpublish if public
+    if(publishedIds.has(id)){
+      unpublishGame(id);
+      setPublishedIds(p=>{const n=new Set(p);n.delete(id);return n});
+    }
   };
   const handleImport=file=>importGameJSON(file,g=>{
     setGames(p=>[g,...p]);
@@ -975,7 +1071,24 @@ export default function App(){
     if(user)saveGameToDB(user.uid,u);
   };
   const handlePlay=d=>{setPlayData(d);setView("play")};
-  const handleSignOut=async()=>{await signOut(auth);setGames([]);setView("home")};
+  const handleSignOut=async()=>{await signOut(auth);setGames([]);setPublishedIds(new Set());setView("home")};
+
+  // Publish/unpublish handlers
+  const handlePublish=async(game)=>{
+    if(!user)return false;
+    const ok=await publishGame(user.uid,game);
+    if(ok)setPublishedIds(p=>new Set(p).add(game.id));
+    return ok;
+  };
+  const handleUnpublish=async(gameId)=>{
+    if(!window.confirm("Unpublish this game? The shared link will stop working."))return;
+    const ok=await unpublishGame(gameId);
+    if(ok)setPublishedIds(p=>{const n=new Set(p);n.delete(gameId);return n});
+  };
+  const handleExitGuestMode=()=>{
+    window.history.replaceState({},"",window.location.pathname);
+    setGuestMode(false);setPlayData(null);setView("home");
+  };
 
   // Show loading while auth state resolves
   if(user===undefined||loading)return(
@@ -984,10 +1097,13 @@ export default function App(){
     </div>
   );
 
+  // Guest mode: playing a public game without login
+  if(guestMode&&playData)return<PlayBoard game={playData} onEdit={()=>{}} onHome={handleExitGuestMode} guestMode={true}/>;
+
   // Show login if not signed in
   if(!user)return<LoginScreen/>;
 
   if(view==="editor"&&activeGame)return<Editor game={activeGame} onSave={handleEditorSave} onPlay={handlePlay} onBack={()=>setView("home")}/>;
   if(view==="play"&&playData)return<PlayBoard game={playData} onEdit={()=>setView("editor")} onHome={()=>setView("home")}/>;
-  return<Home games={games} onCreate={handleCreate} onSelect={handleSelect} onDuplicate={handleDuplicate} onDelete={handleDelete} onImport={handleImport} user={user} onSignOut={handleSignOut}/>;
+  return<Home games={games} onCreate={handleCreate} onSelect={handleSelect} onDuplicate={handleDuplicate} onDelete={handleDelete} onImport={handleImport} user={user} onSignOut={handleSignOut} publishedIds={publishedIds} onPublish={handlePublish} onUnpublish={handleUnpublish}/>;
 }
