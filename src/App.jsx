@@ -645,9 +645,11 @@ function Editor({game,onSave,onPlay,onBack}){
 
   const cellFilled=b=>b&&(b.question||b.subtitle||b.answer||b.imageUrl||b.videoUrl||b.answerImageUrl);
 
-  return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font,display:"flex",flexDirection:"column"}}>
+  return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font,display:"flex",flexDirection:"column",position:"relative"}}>
+    {/* Background image/color — sits behind ALL editor UI */}
+    {(theme.bgImageUrl||theme.bgColor)&&<div style={{position:"fixed",inset:0,background:theme.bgImageUrl?`url(${theme.bgImageUrl}) center/cover no-repeat`:theme.bgColor,opacity:theme.bgOpacity??1,pointerEvents:"none",zIndex:0}}/>}
     {/* ─── Top bar ─── */}
-    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 20px",borderBottom:`1px solid ${T.border}`,background:T.surface,flexShrink:0,gap:8,flexWrap:"wrap"}}>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 20px",borderBottom:`1px solid ${T.border}`,background:T.surface,flexShrink:0,gap:8,flexWrap:"wrap",position:"relative",zIndex:2}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
         <Btn variant="ghost" onClick={()=>{handleSave();onBack()}} style={{fontSize:13}}>← Back</Btn>
         <input value={name} onChange={e=>setName(e.target.value)} placeholder="Game name" style={{border:"none",outline:"none",fontSize:20,fontWeight:800,color:T.text,background:"transparent",fontFamily:T.font,width:200,letterSpacing:-.3}}/>
@@ -662,7 +664,7 @@ function Editor({game,onSave,onPlay,onBack}){
     </div>
 
     {/* ─── Settings panel (collapsible) ─── */}
-    {showSettings&&<div style={{padding:"14px 20px",borderBottom:`1px solid ${T.border}`,background:T.surfaceAlt,display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",flexShrink:0}}>
+    {showSettings&&<div style={{padding:"14px 20px",borderBottom:`1px solid ${T.border}`,background:T.surfaceAlt,display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",flexShrink:0,position:"relative",zIndex:2}}>
       {[["Columns",cols,setCols],["Rows",rws,setRws]].map(([l,v,s])=><div key={l} style={{display:"flex",alignItems:"center",gap:6}}>
         <span style={{fontSize:11,fontWeight:600,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>{l}</span>
         <input type="number" min={1} max={10} value={v} onChange={e=>s(Math.max(1,Math.min(10,+e.target.value||1)))} style={{width:52,padding:"6px 8px",border:`1.5px solid ${T.border}`,borderRadius:8,fontSize:15,fontWeight:700,textAlign:"center",outline:"none",fontFamily:T.fontMono,background:T.surface}}/>
@@ -675,7 +677,7 @@ function Editor({game,onSave,onPlay,onBack}){
     </div>}
 
     {/* ─── Theme panel (collapsible) ─── */}
-    {showTheme&&<div style={{padding:"14px 20px",borderBottom:`1px solid ${T.border}`,background:T.surfaceAlt,flexShrink:0}}>
+    {showTheme&&<div style={{padding:"14px 20px",borderBottom:`1px solid ${T.border}`,background:T.surfaceAlt,flexShrink:0,position:"relative",zIndex:2}}>
       <div style={{display:"flex",gap:24,alignItems:"flex-start",flexWrap:"wrap"}}>
         {/* Background */}
         <div style={{display:"flex",flexDirection:"column",gap:8,minWidth:220}}>
@@ -715,7 +717,7 @@ function Editor({game,onSave,onPlay,onBack}){
     </div>}
 
     {/* ─── Category bar ─── */}
-    <div style={{padding:"10px 20px",borderBottom:`1px solid ${T.border}`,background:T.surface,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",flexShrink:0}}>
+    <div style={{padding:"10px 20px",borderBottom:`1px solid ${T.border}`,background:T.surface,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",flexShrink:0,position:"relative",zIndex:2}}>
       <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1,marginRight:4}}>Categories</span>
       {cats.map((cat,ci)=><div key={ci} style={{display:"flex",alignItems:"center",gap:4,background:T.bg,borderRadius:20,padding:"4px 6px 4px 4px",border:`1.5px solid ${T.border}`}}>
         <input type="color" value={cat.color} onChange={e=>updateCat(ci,"color",e.target.value)} style={{width:20,height:20,border:"none",borderRadius:10,cursor:"pointer",padding:0,flexShrink:0}}/>
@@ -725,11 +727,9 @@ function Editor({game,onSave,onPlay,onBack}){
       <button onClick={addCat} style={{background:"none",border:`1.5px dashed ${T.border}`,borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:600,color:T.textMuted,cursor:"pointer",fontFamily:T.font}}>+</button>
     </div>
 
-    <div style={{display:"flex",flex:1,minHeight:0,overflow:"hidden",position:"relative"}}>
-      {/* Background image/color */}
-      {(theme.bgImageUrl||theme.bgColor)&&<div style={{position:"absolute",inset:0,background:theme.bgImageUrl?`url(${theme.bgImageUrl}) center/cover no-repeat`:theme.bgColor,opacity:theme.bgOpacity??1,pointerEvents:"none",zIndex:0}}/>}
+    <div style={{display:"flex",flex:1,minHeight:0,overflow:"hidden",position:"relative",zIndex:1}}>
       {/* ─── GRID ─── */}
-      <div style={{flex:1,padding:16,overflow:"auto",position:"relative",zIndex:1}}>
+      <div style={{flex:1,padding:16,overflow:"auto",position:"relative"}}>
         <div style={{display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,gap:8,maxWidth:900,margin:"0 auto"}}>
           {grid.slice(0,cols*rws).map((box,i)=>{
             const cat=cats[box.catIdx]||cats[0]||{name:"?",color:"#999"};
