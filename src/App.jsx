@@ -291,7 +291,72 @@ function SettingsDropdown({showSB,setShowSB,pointStep,setPointStep,autoFit,setAu
 }
 
 /* ═══ HTML EXPORT ═══ */
-function exportGameHTML(game){
+async function fetchImageAsDataUrl(url){
+  if(!url||url.startsWith("data:"))return url;
+  try{
+    const res=await fetch(url);
+    if(!res.ok)throw new Error("HTTP "+res.status);
+    const blob=await res.blob();
+    return await new Promise((resolve,reject)=>{
+      const r=new FileReader();
+      r.onload=()=>resolve(r.result);
+      r.onerror=()=>reject(r.error);
+      r.readAsDataURL(blob);
+    });
+  }catch(e){
+    console.warn("Failed to embed image:",url,e);
+    return url; // Fall back to original URL — image won't load offline but won't break the export
+  }
+}
+
+async function exportGameHTML(game){
+  // Show progress so user knows what's happening
+  const allImageUrls=[];
+  game.boxes.forEach(b=>{
+    if(b.imageUrl)allImageUrls.push(b.imageUrl);
+    if(b.answerImageUrl)allImageUrls.push(b.answerImageUrl);
+  });
+  if(game.theme?.bgImageUrl)allImageUrls.push(game.theme.bgImageUrl);
+
+  const total=allImageUrls.length;
+  let done=0;
+  const showProgress=(msg)=>{
+    let el=document.getElementById("__exportProgress");
+    if(!el){
+      el=document.createElement("div");
+      el.id="__exportProgress";
+      el.style.cssText="position:fixed;top:20px;right:20px;background:#1c1917;color:#fff;padding:14px 20px;border-radius:10px;font-family:'Outfit',sans-serif;font-size:14px;font-weight:600;z-index:99999;box-shadow:0 8px 30px rgba(0,0,0,.3)";
+      document.body.appendChild(el);
+    }
+    el.textContent=msg;
+  };
+  const hideProgress=()=>{const el=document.getElementById("__exportProgress");if(el)el.remove()};
+
+  if(total>0)showProgress(`Embedding images for offline use… 0/${total}`);
+
+  // Build a URL→dataUrl map (deduplicates)
+  const urlMap={};
+  for(const url of [...new Set(allImageUrls)]){
+    urlMap[url]=await fetchImageAsDataUrl(url);
+    done++;
+    showProgress(`Embedding images for offline use… ${done}/${total}`);
+  }
+
+  // Clone game with embedded images
+  const embeddedGame=JSON.parse(JSON.stringify(game));
+  embeddedGame.boxes.forEach(b=>{
+    if(b.imageUrl&&urlMap[b.imageUrl])b.imageUrl=urlMap[b.imageUrl];
+    if(b.answerImageUrl&&urlMap[b.answerImageUrl])b.answerImageUrl=urlMap[b.answerImageUrl];
+  });
+  if(embeddedGame.theme?.bgImageUrl&&urlMap[embeddedGame.theme.bgImageUrl]){
+    embeddedGame.theme.bgImageUrl=urlMap[embeddedGame.theme.bgImageUrl];
+  }
+
+  hideProgress();
+  generateHTMLFile(embeddedGame);
+}
+
+function generateHTMLFile(game){
   const d=JSON.stringify(game).replace(/<\/script>/gi,"<\\/script>");
   const html=`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
