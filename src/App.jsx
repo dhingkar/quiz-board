@@ -266,15 +266,34 @@ function Btn({children,onClick,variant="default",style={},...props}){
 }
 
 /* ═══ MEDIA ═══ */
-function MediaPreview({imageUrl,videoUrl,answerImageUrl,showAnswerImg,maxHeight="40vh"}){
+function MediaPreview({imageUrl,videoUrl,answerImageUrl,showAnswerImg,maxHeight="40vh",onImageClick}){
   const yt=ytId(videoUrl);
   const hasMedia=imageUrl||yt||(showAnswerImg&&answerImageUrl);
   if(!hasMedia)return null;
+  const imgCursor=onImageClick?"zoom-in":"default";
   return(
     <div style={{marginTop:"2vh",display:"flex",flexDirection:"column",alignItems:"center",gap:"2vh"}}>
-      {imageUrl&&<img src={imageUrl} alt="" style={{maxWidth:"100%",maxHeight,borderRadius:12,objectFit:"contain",border:`1px solid ${T.borderLight}`}} onError={e=>{e.target.style.display="none"}}/>}
+      {imageUrl&&<img src={imageUrl} alt="" onClick={onImageClick?()=>onImageClick(imageUrl):undefined} style={{maxWidth:"100%",maxHeight,borderRadius:12,objectFit:"contain",border:`1px solid ${T.borderLight}`,cursor:imgCursor}} onError={e=>{e.target.style.display="none"}}/>}
       {yt&&<div style={{width:"100%",maxWidth:640,aspectRatio:"16/9",borderRadius:12,overflow:"hidden",border:`1px solid ${T.borderLight}`}}><iframe src={`https://www.youtube.com/embed/${yt}`} title="Video" style={{width:"100%",height:"100%",border:"none"}} allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowFullScreen/></div>}
-      {showAnswerImg&&answerImageUrl&&<img src={answerImageUrl} alt="" style={{maxWidth:"100%",maxHeight,borderRadius:12,objectFit:"contain",border:`1px solid ${T.success}44`}} onError={e=>{e.target.style.display="none"}}/>}
+      {showAnswerImg&&answerImageUrl&&<img src={answerImageUrl} alt="" onClick={onImageClick?()=>onImageClick(answerImageUrl):undefined} style={{maxWidth:"100%",maxHeight,borderRadius:12,objectFit:"contain",border:`1px solid ${T.success}44`,cursor:imgCursor}} onError={e=>{e.target.style.display="none"}}/>}
+    </div>
+  );
+}
+
+/* ═══ IMAGE LIGHTBOX ═══ */
+function ImageLightbox({src,onClose}){
+  useEffect(()=>{
+    if(!src)return;
+    const onKey=e=>{if(e.key==="Escape")onClose()};
+    document.addEventListener("keydown",onKey);
+    return()=>document.removeEventListener("keydown",onKey);
+  },[src,onClose]);
+  if(!src)return null;
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.92)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",cursor:"zoom-out",padding:"2vh 2vw"}}>
+      <img src={src} alt="" onClick={e=>e.stopPropagation()} style={{maxWidth:"96vw",maxHeight:"96vh",objectFit:"contain",borderRadius:8,boxShadow:"0 20px 80px rgba(0,0,0,.8)",cursor:"default"}}/>
+      <button onClick={onClose} style={{position:"fixed",top:16,right:20,background:"rgba(255,255,255,.12)",border:"none",color:"#fff",fontSize:22,width:42,height:42,borderRadius:21,cursor:"pointer",fontFamily:T.font,fontWeight:600,lineHeight:1}}>×</button>
+      <span style={{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",color:"rgba(255,255,255,.6)",fontSize:11,fontFamily:T.font,letterSpacing:1,textTransform:"uppercase"}}>click anywhere · esc to close</span>
     </div>
   );
 }
@@ -484,7 +503,7 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 <div id="answerBox" class="answer-box hidden"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#04a87e;margin-bottom:4px">Answer</div><div class="fittext" id="aFit" style="max-height:15vh"><div class="fittext-inner" id="aText"></div></div></div>
 </div></div>
 <div class="q-btns"><button class="pill" style="font-size:14px;padding:10px 28px" onclick="goBack()">← Back to Board</button></div>
-<div class="hint">Esc = back · Space = reveal · Right-click a cell to un-gray it</div>
+<div class="hint">Esc = back · Space = reveal · Right-click a cell to un-gray it · Click images to enlarge</div>
 </div>
 <div id="answerPage" class="qpage hidden">
 <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:0;width:100%">
@@ -494,6 +513,11 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 <div id="aImg2" style="margin-top:1.5vh;flex-shrink:0;max-height:40vh;overflow:hidden"></div>
 </div></div>
 <div class="q-btns"><button class="pill" style="font-size:14px;padding:10px 28px" onclick="backToQ()">← Back to Question</button></div>
+</div>
+<div id="lightbox" class="hidden" onclick="closeLightbox()" style="position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;align-items:center;justify-content:center;cursor:zoom-out;padding:2vh 2vw">
+<img id="lightboxImg" onclick="event.stopPropagation()" style="max-width:96vw;max-height:96vh;object-fit:contain;border-radius:8px;box-shadow:0 20px 80px rgba(0,0,0,.8);cursor:default"/>
+<button onclick="closeLightbox()" style="position:fixed;top:16px;right:20px;background:rgba(255,255,255,.12);border:none;color:#fff;font-size:22px;width:42px;height:42px;border-radius:21px;cursor:pointer;font-family:inherit;font-weight:600;line-height:1">×</button>
+<span style="position:fixed;bottom:16px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,.6);font-size:11px;letter-spacing:1px;text-transform:uppercase">click anywhere · esc to close</span>
 </div>
 <script>
 const G=${d};
@@ -561,7 +585,7 @@ document.getElementById("qCat").textContent=cat.name;document.getElementById("qC
 document.getElementById("qSub").textContent=box.subtitle;document.getElementById("qText").innerHTML=box.question||"";
 document.getElementById("qCard").style.borderTop="5px solid "+cat.color;
 const media=document.getElementById("qMedia");media.innerHTML="";media.classList.add("hidden");
-if(box.imageUrl){const img=document.createElement("img");img.src=box.imageUrl;img.onerror=()=>img.style.display="none";media.appendChild(img);media.classList.remove("hidden")}
+if(box.imageUrl){const img=document.createElement("img");img.src=box.imageUrl;img.style.cursor="zoom-in";img.onclick=()=>openLightbox(box.imageUrl);img.onerror=()=>img.style.display="none";media.appendChild(img);media.classList.remove("hidden")}
 const vid=yid(box.videoUrl);if(vid){const w=document.createElement("div");w.className="yt";w.innerHTML='<iframe src="https://www.youtube.com/embed/'+vid+'" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen></iframe>';media.appendChild(w);media.classList.remove("hidden")}
 const rb=document.getElementById("revealBtn"),ab=document.getElementById("answerBox");
 const hasA=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim());
@@ -578,7 +602,7 @@ const hasAImg=box.answerImageUrl&&box.answerImageUrl.trim();
 if(hasAImg){document.getElementById("aCat2").textContent=cat.name+" — Answer";
 document.getElementById("aText2").innerHTML=box.answer||"";
 const c=document.getElementById("aImg2");c.innerHTML="";
-const img=document.createElement("img");img.src=box.answerImageUrl;img.style.cssText="max-width:100%;max-height:40vh;border-radius:12px;object-fit:contain;border:1px solid #04a87e44";img.onerror=()=>img.style.display="none";c.appendChild(img);
+const img=document.createElement("img");img.src=box.answerImageUrl;img.style.cssText="max-width:100%;max-height:40vh;border-radius:12px;object-fit:contain;border:1px solid #04a87e44;cursor:zoom-in";img.onclick=()=>openLightbox(box.answerImageUrl);img.onerror=()=>img.style.display="none";c.appendChild(img);
 document.getElementById("qPage").classList.add("hidden");document.getElementById("answerPage").classList.remove("hidden");
 onAnswerPage=true;setTimeout(()=>{fitText("aFit2","aText2",80,14)},50);history.pushState({v:"a"},"")
 }else{document.getElementById("revealBtn").classList.add("hidden");document.getElementById("answerBox").classList.remove("hidden");
@@ -591,8 +615,21 @@ function toggleFS(){if(!document.fullscreenElement)document.documentElement.requ
 function startTimer(s){clearInterval(timerInterval);let left=s;const fill=document.getElementById("timerFill"),txt=document.getElementById("timerText");
 function upd(){const p=left/s;fill.style.width=(p*100)+"%";fill.style.background=p>.3?"#1c1917":"#dc2626";txt.style.color=p>.3?"#1c1917":"#dc2626";txt.textContent=Math.floor(left/60)+":"+String(left%60).padStart(2,"0")}
 upd();timerInterval=setInterval(()=>{left--;if(left<=0){clearInterval(timerInterval);left=0}upd()},1000)}
-window.addEventListener("popstate",()=>{if(onAnswerPage){backToQ()}else if(curIdx!==null){goBack()}});
-document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(onAnswerPage)backToQ();else goBack()}if(e.key===" "&&!document.getElementById("revealBtn").classList.contains("hidden")){e.preventDefault();revealAnswer()}});
+function openLightbox(src){
+  document.getElementById("lightboxImg").src=src;
+  document.getElementById("lightbox").classList.remove("hidden");
+}
+function closeLightbox(){
+  document.getElementById("lightbox").classList.add("hidden");
+}
+window.addEventListener("popstate",()=>{if(!document.getElementById("lightbox").classList.contains("hidden")){closeLightbox();return}if(onAnswerPage){backToQ()}else if(curIdx!==null){goBack()}});
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){
+    if(!document.getElementById("lightbox").classList.contains("hidden")){closeLightbox();return}
+    if(onAnswerPage)backToQ();else goBack();
+  }
+  if(e.key===" "&&!document.getElementById("revealBtn").classList.contains("hidden")&&document.getElementById("lightbox").classList.contains("hidden")){e.preventDefault();revealAnswer()}
+});
 buildGrid();
 <\/script></body></html>`;
   const blob=new Blob([html],{type:"text/html"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);
@@ -1133,6 +1170,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   const[activeIdx,setActiveIdx]=useState(null);
   const[showAnswer,setShowAnswer]=useState(false);
   const[scores,setScores]=useState([]);
+  const[lightboxSrc,setLightboxSrc]=useState(null);
 
   const cfv=Math.min(2.8,15/rows),sfv=Math.min(2,10/rows);
   const total=columns*rows;
@@ -1182,29 +1220,33 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
     const hasImg=box.answerImageUrl&&box.answerImageUrl.trim();
 
     if(autoFit){
-      return(
+      return(<>
+        <ImageLightbox src={lightboxSrc} onClose={()=>setLightboxSrc(null)}/>
         <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1.5vh 1.5vw",background:T.bg,fontFamily:T.font,overflow:"hidden"}}>
           <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:0}}>
             <div style={{background:"#f0faf6",border:`1.5px solid ${T.success}33`,borderRadius:20,padding:"2.5vh 2.5vw",maxWidth:1200,width:"100%",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",overflow:"hidden",maxHeight:"84vh"}}>
               <div style={{fontSize:"clamp(.7rem,1.6vh,.9rem)",fontWeight:700,textTransform:"uppercase",letterSpacing:2,color:T.success,marginBottom:".3vh",flexShrink:0}}>{cat.name} — Answer</div>
               {box.answer&&box.answer.trim()&&<AutoFitText html={box.answer} baseSizePx={80} minSizePx={14} style={{flex:"0 1 auto",maxHeight:hasImg?"30vh":"50vh"}}/>}
-              {hasImg&&<img src={box.answerImageUrl} alt="" style={{maxWidth:"100%",flex:"0 1 auto",maxHeight:"40vh",borderRadius:12,objectFit:"contain",marginTop:"1.5vh",border:`1px solid ${T.success}44`}} onError={e=>{e.target.style.display="none"}}/>}
+              {hasImg&&<img src={box.answerImageUrl} alt="" onClick={()=>setLightboxSrc(box.answerImageUrl)} style={{maxWidth:"100%",flex:"0 1 auto",maxHeight:"40vh",borderRadius:12,objectFit:"contain",marginTop:"1.5vh",border:`1px solid ${T.success}44`,cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/>}
             </div>
           </div>
           <div style={{display:"flex",justifyContent:"center",gap:12,flexShrink:0,paddingTop:"0.8vh"}}><Btn onClick={goBack} style={{fontSize:14,padding:"10px 28px"}}>← Back to Question</Btn></div>
-        </div>);
+        </div>
+      </>);
     }
 
     // Normal scrollable answer page
-    return(
+    return(<>
+      <ImageLightbox src={lightboxSrc} onClose={()=>setLightboxSrc(null)}/>
       <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",alignItems:"center",padding:"2vh 2vw",background:T.bg,fontFamily:T.font,overflowY:"auto"}}>
         <div style={{background:"#f0faf6",border:`1.5px solid ${T.success}33`,borderRadius:24,padding:"4vh 3vw",maxWidth:1100,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",marginTop:"auto",marginBottom:"2vh"}}>
           <div style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:3,color:T.success,marginBottom:"1vh"}}>{cat.name} — Answer</div>
           {box.answer&&box.answer.trim()&&<div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:700,fontFamily:T.font}} dangerouslySetInnerHTML={{__html:box.answer}}/>}
-          {hasImg&&<div style={{marginTop:"2vh"}}><img src={box.answerImageUrl} alt="" style={{maxWidth:"100%",maxHeight:"50vh",borderRadius:12,objectFit:"contain",border:`1px solid ${T.success}44`}} onError={e=>{e.target.style.display="none"}}/></div>}
+          {hasImg&&<div style={{marginTop:"2vh"}}><img src={box.answerImageUrl} alt="" onClick={()=>setLightboxSrc(box.answerImageUrl)} style={{maxWidth:"100%",maxHeight:"50vh",borderRadius:12,objectFit:"contain",border:`1px solid ${T.success}44`,cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/></div>}
         </div>
         <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><Btn onClick={goBack} style={{fontSize:15,padding:"12px 32px"}}>← Back to Question</Btn></div>
-      </div>);
+      </div>
+    </>);
   }
 
   // ─── QUESTION PAGE ───
@@ -1215,7 +1257,8 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
     // If answer has image → reveal goes to separate page. If no image → inline reveal.
 
     if(autoFit){
-      return(
+      return(<>
+        <ImageLightbox src={lightboxSrc} onClose={()=>setLightboxSrc(null)}/>
         <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1.5vh 1.5vw",background:T.bg,fontFamily:T.font,overflow:"hidden"}}>
           <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:0}}>
             <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:20,padding:"2vh 2.5vw",maxWidth:1200,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",borderTop:`5px solid ${cat.color}`,display:"flex",flexDirection:"column",alignItems:"center",overflow:"hidden",maxHeight:"82vh"}}>
@@ -1223,7 +1266,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
               <div style={{fontWeight:500,fontSize:"clamp(.7rem,1.8vh,1rem)",color:T.textSoft,marginBottom:"1.5vh",flexShrink:0}}>{box.subtitle}</div>
               <AutoFitText html={box.question} baseSizePx={80} minSizePx={14} style={{flex:"0 1 auto",maxHeight:"40vh"}}/>
               {(box.imageUrl||ytId(box.videoUrl))&&<div style={{flexShrink:0,maxHeight:"20vh",overflow:"hidden",marginTop:"1.5vh",width:"100%",display:"flex",justifyContent:"center"}}>
-                {box.imageUrl&&<img src={box.imageUrl} alt="" style={{maxWidth:"100%",maxHeight:"20vh",borderRadius:10,objectFit:"contain"}} onError={e=>{e.target.style.display="none"}}/>}
+                {box.imageUrl&&<img src={box.imageUrl} alt="" onClick={()=>setLightboxSrc(box.imageUrl)} style={{maxWidth:"100%",maxHeight:"20vh",borderRadius:10,objectFit:"contain",cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/>}
                 {ytId(box.videoUrl)&&<div style={{width:"100%",maxWidth:400,aspectRatio:"16/9",borderRadius:10,overflow:"hidden"}}><iframe src={`https://www.youtube.com/embed/${ytId(box.videoUrl)}`} title="Video" style={{width:"100%",height:"100%",border:"none"}} allowFullScreen/></div>}
               </div>}
               {(timerSeconds||0)>0&&<div style={{flexShrink:0,width:"100%"}}><Timer seconds={timerSeconds}/></div>}
@@ -1236,17 +1279,19 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
             </div>
           </div>
           <div style={{display:"flex",justifyContent:"center",gap:12,flexShrink:0,paddingTop:"0.8vh"}}><Btn onClick={goBack} style={{fontSize:14,padding:"10px 28px"}}>← Back</Btn></div>
-        </div>);
+        </div>
+      </>);
     }
 
     // Normal mode: scrollable
-    return(
+    return(<>
+      <ImageLightbox src={lightboxSrc} onClose={()=>setLightboxSrc(null)}/>
       <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",alignItems:"center",padding:"2vh 2vw",background:T.bg,fontFamily:T.font,overflowY:"auto"}}>
         <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:24,padding:"4vh 3vw",maxWidth:1100,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",borderTop:`6px solid ${cat.color}`,marginTop:"auto",marginBottom:"2vh"}}>
           <div style={{fontWeight:800,fontSize:"clamp(1rem,2.8vh,1.6rem)",textTransform:"uppercase",letterSpacing:4,marginBottom:".5vh",color:cat.color,fontFamily:T.font}}>{cat.name}</div>
           <div style={{fontWeight:500,fontSize:"clamp(.9rem,2.2vh,1.3rem)",color:T.textSoft,marginBottom:"3vh"}}>{box.subtitle}</div>
           <div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:700,letterSpacing:-.5,fontFamily:T.font}} dangerouslySetInnerHTML={{__html:box.question}}/>
-          <MediaPreview imageUrl={box.imageUrl} videoUrl={box.videoUrl} maxHeight="35vh"/>
+          <MediaPreview imageUrl={box.imageUrl} videoUrl={box.videoUrl} maxHeight="35vh" onImageClick={setLightboxSrc}/>
           {(timerSeconds||0)>0&&<Timer seconds={timerSeconds}/>}
           {hasAnswer&&!hasAnswerImg&&!showAnswer&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer</button>}
           {hasAnswer&&hasAnswerImg&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer →</button>}
@@ -1256,8 +1301,9 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           </div>}
         </div>
         <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><Btn onClick={goBack} style={{fontSize:15,padding:"12px 32px"}}>← Back to Board</Btn></div>
-        <p style={{color:T.textMuted,fontSize:12,marginTop:8,flexShrink:0}}>Esc = back · Space = reveal · Right-click cells to un-gray</p>
-      </div>);
+        <p style={{color:T.textMuted,fontSize:12,marginTop:8,flexShrink:0}}>Esc = back · Space = reveal · Right-click cells to un-gray · Click images to enlarge</p>
+      </div>
+    </>);
   }
 
   // Grid view
