@@ -24,6 +24,31 @@ function shuffle(a){const b=[...a];for(let i=b.length-1;i>0;i--){const j=Math.fl
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
 function ytId(u){if(!u)return null;const m=u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/);return m?m[1]:null}
 
+/* ═══ THEME CSS HELPERS ═══ */
+function bgCss(theme){
+  if(!theme)return null;
+  const t=theme.bgType||"solid";
+  if(t==="image"&&theme.bgImageUrl)return`url(${theme.bgImageUrl}) center/cover no-repeat`;
+  if(t==="gradient"&&theme.bgColor)return`linear-gradient(${theme.bgGradientAngle||135}deg, ${theme.bgColor}, ${theme.bgColor2||theme.bgColor})`;
+  if(theme.bgColor)return theme.bgColor;
+  return null;
+}
+function cellBgCss(cellData,theme,fallback){
+  // Per-cell override first
+  if(cellData?.bgOverride){
+    if(cellData.bgOverrideType==="gradient"&&cellData.bgOverride2){
+      return`linear-gradient(${cellData.bgOverrideAngle||135}deg, ${cellData.bgOverride}, ${cellData.bgOverride2})`;
+    }
+    return cellData.bgOverride;
+  }
+  // Theme bulk setting
+  if(theme?.cellType==="gradient"&&theme?.cellBg&&theme?.cellBg2){
+    return`linear-gradient(${theme.cellGradientAngle||135}deg, ${theme.cellBg}, ${theme.cellBg2})`;
+  }
+  if(theme?.cellBg)return theme.cellBg;
+  return fallback;
+}
+
 /* ═══ FIRESTORE PERSISTENCE ═══ */
 async function loadGamesFromDB(userId){
   try{
@@ -64,7 +89,27 @@ function saveGamesLocal(g){try{localStorage.setItem("qb_games",JSON.stringify(g)
 
 const DG={name:"Untitled Game",columns:5,rows:5,timerSeconds:0,
   categories:PC.slice(0,5).map((c,i)=>({name:`Category ${i+1}`,color:c})),boxes:[],
-  theme:{bgColor:"",bgImageUrl:"",bgOpacity:1,cellBg:"",cellBorder:""}};
+  theme:{
+    // Background
+    bgType:"solid", // "solid" | "gradient" | "image"
+    bgColor:"",
+    bgColor2:"",
+    bgGradientAngle:135,
+    bgImageUrl:"",
+    bgOpacity:1,
+    // Cell appearance (bulk)
+    cellType:"solid", // "solid" | "gradient"
+    cellBg:"",
+    cellBg2:"",
+    cellGradientAngle:135,
+    cellOpacity:1,
+    cellBorder:"",
+    cellShadow:false,
+    // Game settings (per-game)
+    autoFit:false,
+    showScoreboard:false,
+    pointStep:100,
+  }};
 
 /* ═══ RICH TEXT ═══
    We store HTML strings. The editor uses contentEditable divs.
@@ -292,25 +337,45 @@ function SettingsDropdown({showSB,setShowSB,pointStep,setPointStep,autoFit,setAu
 
 /* ═══ HTML EXPORT ═══ */
 async function fetchImageAsDataUrl(url){
-  if(!url||url.startsWith("data:"))return url;
+  if(!url||url.startsWith("data:"))return{ok:true,data:url};
+  // Method 1: direct fetch (works if bucket CORS is configured)
   try{
-    const res=await fetch(url);
+    const res=await fetch(url,{mode:"cors",cache:"no-cache"});
     if(!res.ok)throw new Error("HTTP "+res.status);
     const blob=await res.blob();
-    return await new Promise((resolve,reject)=>{
+    const data=await new Promise((resolve,reject)=>{
       const r=new FileReader();
       r.onload=()=>resolve(r.result);
       r.onerror=()=>reject(r.error);
       r.readAsDataURL(blob);
     });
-  }catch(e){
-    console.warn("Failed to embed image:",url,e);
-    return url; // Fall back to original URL — image won't load offline but won't break the export
+    return{ok:true,data};
+  }catch(e1){
+    console.warn("fetch() failed for",url,e1);
+    // Method 2: image + canvas (works if image server allows crossOrigin)
+    try{
+      const img=await new Promise((resolve,reject)=>{
+        const im=new Image();
+        im.crossOrigin="anonymous";
+        im.onload=()=>resolve(im);
+        im.onerror=(err)=>reject(err);
+        im.src=url;
+      });
+      const canvas=document.createElement("canvas");
+      canvas.width=img.naturalWidth;
+      canvas.height=img.naturalHeight;
+      const ctx=canvas.getContext("2d");
+      ctx.drawImage(img,0,0);
+      const data=canvas.toDataURL("image/jpeg",0.85);
+      return{ok:true,data};
+    }catch(e2){
+      console.warn("canvas fallback also failed for",url,e2);
+      return{ok:false,data:url,error:e2.message||e1.message||"unknown"};
+    }
   }
 }
 
 async function exportGameHTML(game){
-  // Show progress so user knows what's happening
   const allImageUrls=[];
   game.boxes.forEach(b=>{
     if(b.imageUrl)allImageUrls.push(b.imageUrl);
@@ -318,7 +383,8 @@ async function exportGameHTML(game){
   });
   if(game.theme?.bgImageUrl)allImageUrls.push(game.theme.bgImageUrl);
 
-  const total=allImageUrls.length;
+  const uniqueUrls=[...new Set(allImageUrls)];
+  const total=uniqueUrls.length;
   let done=0;
   const showProgress=(msg)=>{
     let el=document.getElementById("__exportProgress");
@@ -334,10 +400,13 @@ async function exportGameHTML(game){
 
   if(total>0)showProgress(`Embedding images for offline use… 0/${total}`);
 
-  // Build a URL→dataUrl map (deduplicates)
+  // Build a URL→{ok,data} map
   const urlMap={};
-  for(const url of [...new Set(allImageUrls)]){
-    urlMap[url]=await fetchImageAsDataUrl(url);
+  const failed=[];
+  for(const url of uniqueUrls){
+    const result=await fetchImageAsDataUrl(url);
+    urlMap[url]=result;
+    if(!result.ok)failed.push(url);
     done++;
     showProgress(`Embedding images for offline use… ${done}/${total}`);
   }
@@ -345,14 +414,20 @@ async function exportGameHTML(game){
   // Clone game with embedded images
   const embeddedGame=JSON.parse(JSON.stringify(game));
   embeddedGame.boxes.forEach(b=>{
-    if(b.imageUrl&&urlMap[b.imageUrl])b.imageUrl=urlMap[b.imageUrl];
-    if(b.answerImageUrl&&urlMap[b.answerImageUrl])b.answerImageUrl=urlMap[b.answerImageUrl];
+    if(b.imageUrl&&urlMap[b.imageUrl])b.imageUrl=urlMap[b.imageUrl].data;
+    if(b.answerImageUrl&&urlMap[b.answerImageUrl])b.answerImageUrl=urlMap[b.answerImageUrl].data;
   });
   if(embeddedGame.theme?.bgImageUrl&&urlMap[embeddedGame.theme.bgImageUrl]){
-    embeddedGame.theme.bgImageUrl=urlMap[embeddedGame.theme.bgImageUrl];
+    embeddedGame.theme.bgImageUrl=urlMap[embeddedGame.theme.bgImageUrl].data;
   }
 
   hideProgress();
+
+  if(failed.length>0){
+    const msg=`⚠️ ${failed.length} of ${total} image(s) could not be embedded and will still use URLs (requires internet to load).\n\nThis is usually caused by Firebase Storage CORS. Go to Firebase Console → Storage → Rules tab → check that "read" is public, OR run:\n\ngsutil cors set cors.json gs://quiz-board-claude.firebasestorage.app\n\n(where cors.json allows GET from all origins)\n\nExport the HTML anyway?`;
+    if(!window.confirm(msg))return;
+  }
+
   generateHTMLFile(embeddedGame);
 }
 
@@ -430,13 +505,27 @@ grid.style.gridTemplateColumns="repeat("+COLS+",1fr)";
 grid.style.gridTemplateRows="repeat("+ROWS+",1fr)";
 grid.style.gap=Math.min(.6,3/ROWS)+"vh "+Math.min(.4,2/COLS)+"vw";
 const cfv=Math.min(2.8,15/ROWS),sfv=Math.min(2,10/ROWS);
-// Apply theme background
+// Apply theme background (supports solid, gradient, image)
 (function applyTheme(){
   const bg=document.getElementById("bgLayer");if(!bg)return;
-  if(THEME.bgImageUrl){bg.style.background="url("+THEME.bgImageUrl+") center/cover no-repeat"}
+  const t=THEME.bgType||"solid";
+  if(t==="image"&&THEME.bgImageUrl){bg.style.background="url("+THEME.bgImageUrl+") center/cover no-repeat"}
+  else if(t==="gradient"&&THEME.bgColor){bg.style.background="linear-gradient("+(THEME.bgGradientAngle||135)+"deg, "+THEME.bgColor+", "+(THEME.bgColor2||THEME.bgColor)+")"}
   else if(THEME.bgColor){bg.style.background=THEME.bgColor}
   bg.style.opacity=THEME.bgOpacity!=null?THEME.bgOpacity:1;
 })();
+function cellBgCss(box){
+  if(box.bgOverride){
+    if(box.bgOverrideType==="gradient"&&box.bgOverride2){
+      return"linear-gradient("+(box.bgOverrideAngle||135)+"deg, "+box.bgOverride+", "+box.bgOverride2+")";
+    }
+    return box.bgOverride;
+  }
+  if(THEME.cellType==="gradient"&&THEME.cellBg&&THEME.cellBg2){
+    return"linear-gradient("+(THEME.cellGradientAngle||135)+"deg, "+THEME.cellBg+", "+THEME.cellBg2+")";
+  }
+  return THEME.cellBg||"#fff";
+}
 let timerInterval=null;
 function yid(u){if(!u)return null;const m=u.match(/(?:youtube\\.com\\/(?:watch\\?v=|embed\\/|shorts\\/)|youtu\\.be\\/)([\\w-]{11})/);return m?m[1]:null}
 function fitText(outerId,innerId,maxPx,minPx){
@@ -450,10 +539,16 @@ function buildGrid(){grid.innerHTML="";order.slice(0,COLS*ROWS).forEach(idx=>{
 const box=idx<boxes.length?boxes[idx]:null;const d=document.createElement("div");d.className="cell"+(visited[idx]?" v":"");
 if(!box){d.style.opacity="0.06";grid.appendChild(d);return}
 const cat=cats[box.catIdx]||{name:"?",color:"#999"};
-const cellBg=box.bgOverride||THEME.cellBg||"#fff";
+const cellBg=cellBgCss(box);
 const borderColor=box.borderOverride||cat.color;
 const outerBorder=box.borderOverride||THEME.cellBorder||"#e6e4df";
-if(!visited[idx]){d.style.background=cellBg;d.style.border="1px solid "+outerBorder}
+const cellOpacity=box.cellOpacity!=null?box.cellOpacity:(THEME.cellOpacity!=null?THEME.cellOpacity:1);
+if(!visited[idx]){
+  d.style.background=cellBg;
+  d.style.border="1px solid "+outerBorder;
+  d.style.opacity=cellOpacity;
+  if(THEME.cellShadow)d.style.boxShadow="0 4px 12px rgba(0,0,0,.2)";
+}
 d.style.borderLeft="4px solid "+borderColor;
 const c=document.createElement("span");c.style.cssText="font-weight:800;font-size:clamp(0.55rem,"+cfv+"vh,1.8rem);line-height:1.1;letter-spacing:-0.3px;color:"+(visited[idx]?"#999":cat.color);c.textContent=cat.name;
 const s=document.createElement("span");s.style.cssText="font-weight:500;font-size:clamp(0.4rem,"+sfv+"vh,1.1rem);line-height:1.1;color:"+(visited[idx]?"#bbb":"#78716c");s.textContent=box.subtitle;
@@ -579,6 +674,170 @@ function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport,user,onSign
 }
 
 /* ═══════════════════════════════════════
+   THEME PANEL
+   ═══════════════════════════════════════ */
+const GRADIENT_PRESETS=[
+  {name:"Sunset",c1:"#ff7e5f",c2:"#feb47b",angle:135},
+  {name:"Ocean",c1:"#2193b0",c2:"#6dd5ed",angle:135},
+  {name:"Purple",c1:"#8e2de2",c2:"#4a00e0",angle:135},
+  {name:"Forest",c1:"#11998e",c2:"#38ef7d",angle:135},
+  {name:"Cherry",c1:"#eb3349",c2:"#f45c43",angle:135},
+  {name:"Midnight",c1:"#232526",c2:"#414345",angle:135},
+  {name:"Gold",c1:"#ffd700",c2:"#ff8c00",angle:135},
+  {name:"Rose",c1:"#f093fb",c2:"#f5576c",angle:135},
+  {name:"Cool",c1:"#667eea",c2:"#764ba2",angle:135},
+  {name:"Warm",c1:"#f857a6",c2:"#ff5858",angle:135},
+  {name:"Mint",c1:"#00b09b",c2:"#96c93d",angle:135},
+  {name:"Peach",c1:"#ffecd2",c2:"#fcb69f",angle:135},
+];
+
+function ThemePanel({theme,updateTheme}){
+  const bgType=theme.bgType||"solid";
+  const cellType=theme.cellType||"solid";
+
+  const setBgPreset=(p)=>{
+    updateTheme("bgType","gradient");
+    updateTheme("bgColor",p.c1);
+    updateTheme("bgColor2",p.c2);
+    updateTheme("bgGradientAngle",p.angle);
+  };
+  const setCellPreset=(p)=>{
+    updateTheme("cellType","gradient");
+    updateTheme("cellBg",p.c1);
+    updateTheme("cellBg2",p.c2);
+    updateTheme("cellGradientAngle",p.angle);
+  };
+
+  const lbl={fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1};
+  const subLbl={fontSize:11,color:T.textSoft,fontWeight:600,width:56};
+  const tabBtn=(active)=>({padding:"6px 12px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",border:"none",background:active?T.text:T.bg,color:active?"#fff":T.textSoft,fontFamily:T.font,transition:"all .1s"});
+
+  return(<div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,background:T.surfaceAlt,flexShrink:0,position:"relative",zIndex:2,maxHeight:"60vh",overflowY:"auto"}}>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:20}}>
+
+      {/* BACKGROUND */}
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <span style={lbl}>Background</span>
+          <div style={{display:"flex",gap:4}}>
+            <button onClick={()=>updateTheme("bgType","solid")} style={tabBtn(bgType==="solid")}>Solid</button>
+            <button onClick={()=>updateTheme("bgType","gradient")} style={tabBtn(bgType==="gradient")}>Gradient</button>
+            <button onClick={()=>updateTheme("bgType","image")} style={tabBtn(bgType==="image")}>Image</button>
+          </div>
+        </div>
+
+        {bgType==="solid"&&<div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={subLbl}>Color</span>
+          <input type="color" value={theme.bgColor||"#f4f3f0"} onChange={e=>updateTheme("bgColor",e.target.value)} style={{width:32,height:32,border:`1.5px solid ${T.border}`,borderRadius:8,cursor:"pointer",padding:0}}/>
+          <input type="text" value={theme.bgColor||""} onChange={e=>updateTheme("bgColor",e.target.value)} placeholder="(default)" style={{padding:"6px 10px",border:`1.5px solid ${T.border}`,borderRadius:6,fontSize:12,fontFamily:T.fontMono,background:T.surface,width:90}}/>
+          {theme.bgColor&&<button onClick={()=>updateTheme("bgColor","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font,fontWeight:600}}>Reset</button>}
+        </div>}
+
+        {bgType==="gradient"&&<>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={subLbl}>Colors</span>
+            <input type="color" value={theme.bgColor||"#667eea"} onChange={e=>updateTheme("bgColor",e.target.value)} style={{width:32,height:32,border:`1.5px solid ${T.border}`,borderRadius:8,cursor:"pointer",padding:0}}/>
+            <span style={{color:T.textMuted}}>→</span>
+            <input type="color" value={theme.bgColor2||"#764ba2"} onChange={e=>updateTheme("bgColor2",e.target.value)} style={{width:32,height:32,border:`1.5px solid ${T.border}`,borderRadius:8,cursor:"pointer",padding:0}}/>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={subLbl}>Angle</span>
+            <input type="range" min={0} max={360} step={15} value={theme.bgGradientAngle??135} onChange={e=>updateTheme("bgGradientAngle",parseInt(e.target.value))} style={{flex:1}}/>
+            <span style={{fontSize:11,fontFamily:T.fontMono,color:T.textMuted,width:40,textAlign:"right"}}>{theme.bgGradientAngle??135}°</span>
+          </div>
+          <div>
+            <span style={{...lbl,fontSize:10}}>Presets</span>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:6,marginTop:6}}>
+              {GRADIENT_PRESETS.map(p=><button key={p.name} onClick={()=>setBgPreset(p)} title={p.name}
+                style={{height:28,borderRadius:6,border:`1.5px solid ${T.border}`,cursor:"pointer",background:`linear-gradient(${p.angle}deg, ${p.c1}, ${p.c2})`}}/>)}
+            </div>
+          </div>
+        </>}
+
+        {bgType==="image"&&<div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+          <span style={{...subLbl,paddingTop:6}}>Image</span>
+          <div style={{flex:1}}><ImageUpload value={theme.bgImageUrl||""} onChange={v=>updateTheme("bgImageUrl",v)} label="" color={T.textSoft}/></div>
+        </div>}
+
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={subLbl}>Opacity</span>
+          <input type="range" min={0} max={1} step={0.05} value={theme.bgOpacity??1} onChange={e=>updateTheme("bgOpacity",parseFloat(e.target.value))} style={{flex:1}}/>
+          <span style={{fontSize:11,fontFamily:T.fontMono,color:T.textMuted,width:36,textAlign:"right"}}>{Math.round((theme.bgOpacity??1)*100)}%</span>
+        </div>
+
+        {/* Preview */}
+        <div style={{height:60,borderRadius:10,border:`1.5px solid ${T.border}`,background:bgCss(theme)||T.surface,opacity:theme.bgOpacity??1,position:"relative"}}>
+          <span style={{position:"absolute",top:4,right:8,fontSize:10,fontWeight:700,color:T.textMuted,background:"rgba(255,255,255,.7)",padding:"2px 6px",borderRadius:4}}>PREVIEW</span>
+        </div>
+      </div>
+
+      {/* ALL CELLS */}
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <span style={lbl}>All Cells</span>
+          <div style={{display:"flex",gap:4}}>
+            <button onClick={()=>updateTheme("cellType","solid")} style={tabBtn(cellType==="solid")}>Solid</button>
+            <button onClick={()=>updateTheme("cellType","gradient")} style={tabBtn(cellType==="gradient")}>Gradient</button>
+          </div>
+        </div>
+
+        {cellType==="solid"&&<div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={subLbl}>Fill</span>
+          <input type="color" value={theme.cellBg||"#ffffff"} onChange={e=>updateTheme("cellBg",e.target.value)} style={{width:32,height:32,border:`1.5px solid ${T.border}`,borderRadius:8,cursor:"pointer",padding:0}}/>
+          <input type="text" value={theme.cellBg||""} onChange={e=>updateTheme("cellBg",e.target.value)} placeholder="(default)" style={{padding:"6px 10px",border:`1.5px solid ${T.border}`,borderRadius:6,fontSize:12,fontFamily:T.fontMono,background:T.surface,width:90}}/>
+          {theme.cellBg&&<button onClick={()=>updateTheme("cellBg","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font,fontWeight:600}}>Reset</button>}
+        </div>}
+
+        {cellType==="gradient"&&<>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={subLbl}>Colors</span>
+            <input type="color" value={theme.cellBg||"#667eea"} onChange={e=>updateTheme("cellBg",e.target.value)} style={{width:32,height:32,border:`1.5px solid ${T.border}`,borderRadius:8,cursor:"pointer",padding:0}}/>
+            <span style={{color:T.textMuted}}>→</span>
+            <input type="color" value={theme.cellBg2||"#764ba2"} onChange={e=>updateTheme("cellBg2",e.target.value)} style={{width:32,height:32,border:`1.5px solid ${T.border}`,borderRadius:8,cursor:"pointer",padding:0}}/>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={subLbl}>Angle</span>
+            <input type="range" min={0} max={360} step={15} value={theme.cellGradientAngle??135} onChange={e=>updateTheme("cellGradientAngle",parseInt(e.target.value))} style={{flex:1}}/>
+            <span style={{fontSize:11,fontFamily:T.fontMono,color:T.textMuted,width:40,textAlign:"right"}}>{theme.cellGradientAngle??135}°</span>
+          </div>
+          <div>
+            <span style={{...lbl,fontSize:10}}>Presets</span>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:6,marginTop:6}}>
+              {GRADIENT_PRESETS.map(p=><button key={p.name} onClick={()=>setCellPreset(p)} title={p.name}
+                style={{height:28,borderRadius:6,border:`1.5px solid ${T.border}`,cursor:"pointer",background:`linear-gradient(${p.angle}deg, ${p.c1}, ${p.c2})`}}/>)}
+            </div>
+          </div>
+        </>}
+
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={subLbl}>Border</span>
+          <input type="color" value={theme.cellBorder||"#e6e4df"} onChange={e=>updateTheme("cellBorder",e.target.value)} style={{width:32,height:32,border:`1.5px solid ${T.border}`,borderRadius:8,cursor:"pointer",padding:0}}/>
+          {theme.cellBorder&&<button onClick={()=>updateTheme("cellBorder","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font,fontWeight:600}}>Reset</button>}
+        </div>
+
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={subLbl}>Opacity</span>
+          <input type="range" min={0.1} max={1} step={0.05} value={theme.cellOpacity??1} onChange={e=>updateTheme("cellOpacity",parseFloat(e.target.value))} style={{flex:1}}/>
+          <span style={{fontSize:11,fontFamily:T.fontMono,color:T.textMuted,width:36,textAlign:"right"}}>{Math.round((theme.cellOpacity??1)*100)}%</span>
+        </div>
+
+        <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13,color:T.text,fontWeight:600}}>
+          <input type="checkbox" checked={theme.cellShadow||false} onChange={e=>updateTheme("cellShadow",e.target.checked)} style={{cursor:"pointer",width:16,height:16}}/>
+          Drop shadow
+        </label>
+
+        {/* Preview */}
+        <div style={{height:60,borderRadius:10,border:`1.5px solid ${theme.cellBorder||T.border}`,background:cellBgCss(null,theme,T.surface),opacity:theme.cellOpacity??1,boxShadow:theme.cellShadow?"0 4px 12px rgba(0,0,0,.15)":"none",position:"relative"}}>
+          <span style={{position:"absolute",top:4,right:8,fontSize:10,fontWeight:700,color:T.textMuted,background:"rgba(255,255,255,.7)",padding:"2px 6px",borderRadius:4}}>PREVIEW</span>
+        </div>
+
+        <p style={{fontSize:11,color:T.textMuted,margin:0}}>Per-cell overrides take priority over these</p>
+      </div>
+    </div>
+  </div>);
+}
+
+/* ═══════════════════════════════════════
    EDITOR — Visual grid-based editor
    ═══════════════════════════════════════ */
 function Editor({game,onSave,onPlay,onBack}){
@@ -647,7 +906,7 @@ function Editor({game,onSave,onPlay,onBack}){
 
   return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font,display:"flex",flexDirection:"column",position:"relative"}}>
     {/* Background image/color — sits behind ALL editor UI */}
-    {(theme.bgImageUrl||theme.bgColor)&&<div style={{position:"fixed",inset:0,background:theme.bgImageUrl?`url(${theme.bgImageUrl}) center/cover no-repeat`:theme.bgColor,opacity:theme.bgOpacity??1,pointerEvents:"none",zIndex:0}}/>}
+    {(()=>{const bg=bgCss(theme);return bg?<div style={{position:"fixed",inset:0,background:bg,opacity:theme.bgOpacity??1,pointerEvents:"none",zIndex:0}}/>:null})()}
     {/* ─── Top bar ─── */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 20px",borderBottom:`1px solid ${T.border}`,background:T.surface,flexShrink:0,gap:8,flexWrap:"wrap",position:"relative",zIndex:2}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -664,57 +923,44 @@ function Editor({game,onSave,onPlay,onBack}){
     </div>
 
     {/* ─── Settings panel (collapsible) ─── */}
-    {showSettings&&<div style={{padding:"14px 20px",borderBottom:`1px solid ${T.border}`,background:T.surfaceAlt,display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",flexShrink:0,position:"relative",zIndex:2}}>
-      {[["Columns",cols,setCols],["Rows",rws,setRws]].map(([l,v,s])=><div key={l} style={{display:"flex",alignItems:"center",gap:6}}>
-        <span style={{fontSize:11,fontWeight:600,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>{l}</span>
-        <input type="number" min={1} max={10} value={v} onChange={e=>s(Math.max(1,Math.min(10,+e.target.value||1)))} style={{width:52,padding:"6px 8px",border:`1.5px solid ${T.border}`,borderRadius:8,fontSize:15,fontWeight:700,textAlign:"center",outline:"none",fontFamily:T.fontMono,background:T.surface}}/>
-      </div>)}
-      <div style={{display:"flex",alignItems:"center",gap:6}}>
-        <span style={{fontSize:11,fontWeight:600,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Timer</span>
-        <input type="number" min={0} max={600} value={timer} onChange={e=>setTimer(Math.max(0,Math.min(600,+e.target.value||0)))} style={{width:60,padding:"6px 8px",border:`1.5px solid ${T.border}`,borderRadius:8,fontSize:15,fontWeight:700,textAlign:"center",outline:"none",fontFamily:T.fontMono,background:T.surface}}/>
-        <span style={{fontSize:11,color:T.textMuted}}>sec</span>
+    {showSettings&&<div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,background:T.surfaceAlt,display:"flex",gap:24,alignItems:"flex-start",flexWrap:"wrap",flexShrink:0,position:"relative",zIndex:2}}>
+      {/* Grid */}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Grid</span>
+        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+          {[["Cols",cols,setCols],["Rows",rws,setRws]].map(([l,v,s])=><div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
+            <span style={{fontSize:11,fontWeight:600,color:T.textMuted}}>{l}</span>
+            <input type="number" min={1} max={10} value={v} onChange={e=>s(Math.max(1,Math.min(10,+e.target.value||1)))} style={{width:48,padding:"6px 8px",border:`1.5px solid ${T.border}`,borderRadius:8,fontSize:14,fontWeight:700,textAlign:"center",outline:"none",fontFamily:T.fontMono,background:T.surface}}/>
+          </div>)}
+          <div style={{display:"flex",alignItems:"center",gap:4}}>
+            <span style={{fontSize:11,fontWeight:600,color:T.textMuted}}>Timer</span>
+            <input type="number" min={0} max={600} value={timer} onChange={e=>setTimer(Math.max(0,Math.min(600,+e.target.value||0)))} style={{width:60,padding:"6px 8px",border:`1.5px solid ${T.border}`,borderRadius:8,fontSize:14,fontWeight:700,textAlign:"center",outline:"none",fontFamily:T.fontMono,background:T.surface}}/>
+            <span style={{fontSize:11,color:T.textMuted}}>sec</span>
+          </div>
+        </div>
+      </div>
+      {/* Play options (per-game) */}
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Play Options</span>
+        <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13,color:T.text,fontWeight:600}}>
+            <input type="checkbox" checked={theme.autoFit||false} onChange={e=>updateTheme("autoFit",e.target.checked)} style={{cursor:"pointer",width:16,height:16}}/>
+            Auto-fit text
+          </label>
+          <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:13,color:T.text,fontWeight:600}}>
+            <input type="checkbox" checked={theme.showScoreboard||false} onChange={e=>updateTheme("showScoreboard",e.target.checked)} style={{cursor:"pointer",width:16,height:16}}/>
+            Scoreboard
+          </label>
+        </div>
+        {theme.showScoreboard&&<div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:11,color:T.textSoft}}>Points:</span>
+          {[5,10,25,50,100,200,500].map(v=><button key={v} onClick={()=>updateTheme("pointStep",v)} style={{padding:"3px 8px",borderRadius:6,fontSize:11,fontWeight:700,fontFamily:T.fontMono,cursor:"pointer",border:"none",background:(theme.pointStep||100)===v?T.text:T.bg,color:(theme.pointStep||100)===v?"#fff":T.textSoft}}>{v}</button>)}
+        </div>}
       </div>
     </div>}
 
     {/* ─── Theme panel (collapsible) ─── */}
-    {showTheme&&<div style={{padding:"14px 20px",borderBottom:`1px solid ${T.border}`,background:T.surfaceAlt,flexShrink:0,position:"relative",zIndex:2}}>
-      <div style={{display:"flex",gap:24,alignItems:"flex-start",flexWrap:"wrap"}}>
-        {/* Background */}
-        <div style={{display:"flex",flexDirection:"column",gap:8,minWidth:220}}>
-          <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Background</span>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:12,color:T.textSoft,width:52}}>Color</span>
-            <input type="color" value={theme.bgColor||"#f4f3f0"} onChange={e=>updateTheme("bgColor",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
-            {theme.bgColor&&<button onClick={()=>updateTheme("bgColor","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font}}>Reset</button>}
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:12,color:T.textSoft,width:52}}>Image</span>
-            <div style={{flex:1}}><ImageUpload value={theme.bgImageUrl||""} onChange={v=>updateTheme("bgImageUrl",v)} label="" color={T.textSoft}/></div>
-          </div>
-          {(theme.bgImageUrl||theme.bgColor)&&<div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:12,color:T.textSoft,width:52}}>Opacity</span>
-            <input type="range" min={0.1} max={1} step={0.05} value={theme.bgOpacity??1} onChange={e=>updateTheme("bgOpacity",parseFloat(e.target.value))} style={{flex:1}}/>
-            <span style={{fontSize:11,fontFamily:T.fontMono,color:T.textMuted,width:36,textAlign:"right"}}>{Math.round((theme.bgOpacity??1)*100)}%</span>
-          </div>}
-        </div>
-
-        {/* Bulk cell colors */}
-        <div style={{display:"flex",flexDirection:"column",gap:8,minWidth:220}}>
-          <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>All Cells</span>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:12,color:T.textSoft,width:52}}>Fill</span>
-            <input type="color" value={theme.cellBg||"#ffffff"} onChange={e=>updateTheme("cellBg",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
-            {theme.cellBg&&<button onClick={()=>updateTheme("cellBg","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font}}>Reset</button>}
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:12,color:T.textSoft,width:52}}>Border</span>
-            <input type="color" value={theme.cellBorder||"#e6e4df"} onChange={e=>updateTheme("cellBorder",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
-            {theme.cellBorder&&<button onClick={()=>updateTheme("cellBorder","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font}}>Reset</button>}
-          </div>
-          <p style={{fontSize:11,color:T.textMuted,margin:0}}>Per-cell overrides (set in cell editor) take priority</p>
-        </div>
-      </div>
-    </div>}
+    {showTheme&&<ThemePanel theme={theme} updateTheme={updateTheme}/>}
 
     {/* ─── Category bar ─── */}
     <div style={{padding:"10px 20px",borderBottom:`1px solid ${T.border}`,background:T.surface,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",flexShrink:0,position:"relative",zIndex:2}}>
@@ -735,9 +981,11 @@ function Editor({game,onSave,onPlay,onBack}){
             const cat=cats[box.catIdx]||cats[0]||{name:"?",color:"#999"};
             const filled=cellFilled(box);
             const isEditing=editIdx===i;
-            const cellBg=box.bgOverride||theme.cellBg||T.surface;
+            const cellBg=cellBgCss(box,theme,T.surface);
             const borderColor=box.borderOverride||cat.color;
             const outerBorder=box.borderOverride||theme.cellBorder||T.border;
+            const cellOpacity=box.cellOpacity!=null?box.cellOpacity:(theme.cellOpacity??1);
+            const hasGrad=(box.bgOverrideType==="gradient"||(!box.bgOverride&&theme.cellType==="gradient"));
             return(<div key={i}
               draggable
               onDragStart={()=>setDragIdx(i)}
@@ -745,19 +993,20 @@ function Editor({game,onSave,onPlay,onBack}){
               onDrop={()=>{if(dragIdx!==null&&dragIdx!==i){swapCells(dragIdx,i);if(editIdx===dragIdx)setEditIdx(i);else if(editIdx===i)setEditIdx(dragIdx)}setDragIdx(null)}}
               onClick={()=>setEditIdx(i)}
               style={{
-                background:isEditing?cat.color+"12":cellBg,
+                background:isEditing?cat.color+"22":cellBg,
                 border:isEditing?`2px solid ${cat.color}`:`1.5px solid ${filled?outerBorder:T.borderLight}`,
                 borderLeft:`4px solid ${borderColor}`,
                 borderRadius:12,padding:"12px 10px",cursor:"pointer",
                 minHeight:80,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
                 gap:4,transition:"all .15s",position:"relative",
-                opacity:filled?1:0.6,
+                opacity:filled?cellOpacity:(cellOpacity*0.55),
+                boxShadow:theme.cellShadow?"0 4px 12px rgba(0,0,0,.15)":"none",
               }}>
-              <span style={{fontWeight:800,fontSize:13,color:cat.color,lineHeight:1.1,textAlign:"center"}}>{cat.name}</span>
+              <span style={{fontWeight:800,fontSize:13,color:cat.color,lineHeight:1.1,textAlign:"center",textShadow:hasGrad?"0 1px 2px rgba(255,255,255,.5)":"none"}}>{cat.name}</span>
               <span style={{fontWeight:500,fontSize:11,color:T.textSoft,lineHeight:1.1,textAlign:"center"}}>{box.subtitle||"—"}</span>
               {filled&&<div style={{position:"absolute",top:6,right:6,width:7,height:7,borderRadius:4,background:T.success}}/>}
               {(box.imageUrl||box.answerImageUrl)&&<div style={{position:"absolute",bottom:6,right:6,fontSize:10,color:T.textMuted}}>🖼</div>}
-              {(box.bgOverride||box.borderOverride)&&<div style={{position:"absolute",top:6,left:10,fontSize:9,color:T.textMuted}}>🎨</div>}
+              {(box.bgOverride||box.borderOverride||box.cellOpacity!=null)&&<div style={{position:"absolute",top:6,left:10,fontSize:9,color:T.textMuted}}>🎨</div>}
             </div>);
           })}
         </div>
@@ -820,15 +1069,43 @@ function Editor({game,onSave,onPlay,onBack}){
         {/* Per-cell color overrides */}
         <div style={{marginTop:6,paddingTop:10,borderTop:`1px solid ${T.borderLight}`}}>
           <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Cell Colors (override)</span>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
-            <span style={{fontSize:12,color:T.textSoft,width:52}}>Fill</span>
-            <input type="color" value={editBox.bgOverride||theme.cellBg||"#ffffff"} onChange={e=>updateCell(editIdx,"bgOverride",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
-            {editBox.bgOverride&&<button onClick={()=>updateCell(editIdx,"bgOverride","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font}}>Reset</button>}
+
+          {/* Type selector */}
+          <div style={{display:"flex",gap:4,marginTop:6}}>
+            <button onClick={()=>updateCell(editIdx,"bgOverrideType","solid")} style={{padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:(editBox.bgOverrideType||"solid")==="solid"?T.text:T.bg,color:(editBox.bgOverrideType||"solid")==="solid"?"#fff":T.textSoft,fontFamily:T.font}}>Solid</button>
+            <button onClick={()=>updateCell(editIdx,"bgOverrideType","gradient")} style={{padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:editBox.bgOverrideType==="gradient"?T.text:T.bg,color:editBox.bgOverrideType==="gradient"?"#fff":T.textSoft,fontFamily:T.font}}>Gradient</button>
           </div>
+
+          {(editBox.bgOverrideType||"solid")==="solid"?
+            <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+              <span style={{fontSize:12,color:T.textSoft,width:52}}>Fill</span>
+              <input type="color" value={editBox.bgOverride||"#ffffff"} onChange={e=>updateCell(editIdx,"bgOverride",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
+              {editBox.bgOverride&&<button onClick={()=>updateCell(editIdx,"bgOverride","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font}}>Reset</button>}
+            </div>
+            :<>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:6}}>
+                <span style={{fontSize:12,color:T.textSoft,width:52}}>Colors</span>
+                <input type="color" value={editBox.bgOverride||"#667eea"} onChange={e=>updateCell(editIdx,"bgOverride",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
+                <span style={{color:T.textMuted}}>→</span>
+                <input type="color" value={editBox.bgOverride2||"#764ba2"} onChange={e=>updateCell(editIdx,"bgOverride2",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4}}>
+                <span style={{fontSize:12,color:T.textSoft,width:52}}>Angle</span>
+                <input type="range" min={0} max={360} step={15} value={editBox.bgOverrideAngle??135} onChange={e=>updateCell(editIdx,"bgOverrideAngle",parseInt(e.target.value))} style={{flex:1}}/>
+                <span style={{fontSize:10,fontFamily:T.fontMono,color:T.textMuted,width:32,textAlign:"right"}}>{editBox.bgOverrideAngle??135}°</span>
+              </div>
+            </>
+          }
           <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
             <span style={{fontSize:12,color:T.textSoft,width:52}}>Border</span>
             <input type="color" value={editBox.borderOverride||editCat?.color||"#999"} onChange={e=>updateCell(editIdx,"borderOverride",e.target.value)} style={{width:28,height:28,border:`1.5px solid ${T.border}`,borderRadius:6,cursor:"pointer",padding:0}}/>
             {editBox.borderOverride&&<button onClick={()=>updateCell(editIdx,"borderOverride","")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font}}>Reset</button>}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+            <span style={{fontSize:12,color:T.textSoft,width:52}}>Opacity</span>
+            <input type="range" min={0.1} max={1} step={0.05} value={editBox.cellOpacity??theme.cellOpacity??1} onChange={e=>updateCell(editIdx,"cellOpacity",parseFloat(e.target.value))} style={{flex:1}}/>
+            <span style={{fontSize:10,fontFamily:T.fontMono,color:T.textMuted,width:32,textAlign:"right"}}>{Math.round((editBox.cellOpacity??theme.cellOpacity??1)*100)}%</span>
+            {editBox.cellOpacity!=null&&<button onClick={()=>updateCell(editIdx,"cellOpacity",null)} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font}}>Reset</button>}
           </div>
         </div>
 
@@ -847,14 +1124,15 @@ function Editor({game,onSave,onPlay,onBack}){
    ═══════════════════════════════════════ */
 function PlayBoard({game,onEdit,onHome,guestMode}){
   const{categories,boxes,columns,rows,timerSeconds}=game;
+  const theme=game.theme||{};
+  const autoFit=theme.autoFit||false;
+  const showSB=theme.showScoreboard||false;
+  const pointStep=theme.pointStep||100;
   const[order,setOrder]=useState(()=>boxes.map((_,i)=>i));
   const[visited,setVisited]=useState({});
   const[activeIdx,setActiveIdx]=useState(null);
   const[showAnswer,setShowAnswer]=useState(false);
   const[scores,setScores]=useState([]);
-  const[showSB,setShowSB]=useState(false);
-  const[pointStep,setPointStep]=useState(100);
-  const[autoFit,setAutoFit]=useState(false);
 
   const cfv=Math.min(2.8,15/rows),sfv=Math.min(2,10/rows);
   const total=columns*rows;
@@ -983,11 +1261,10 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   }
 
   // Grid view
-  const theme=game.theme||{};
   return(
     <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1vh 1.5vw",background:T.bg,fontFamily:T.font,overflow:"hidden"}}>
       {/* Background layer */}
-      {(theme.bgImageUrl||theme.bgColor)&&<div style={{position:"absolute",inset:0,background:theme.bgImageUrl?`url(${theme.bgImageUrl}) center/cover no-repeat`:theme.bgColor,opacity:theme.bgOpacity??1,pointerEvents:"none",zIndex:0}}/>}
+      {(()=>{const bg=bgCss(theme);return bg?<div style={{position:"absolute",inset:0,background:bg,opacity:theme.bgOpacity??1,pointerEvents:"none",zIndex:0}}/>:null})()}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,flexWrap:"nowrap",gap:6,marginBottom:"0.6vh",position:"relative",zIndex:1}}>
         <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}><Btn variant="ghost" onClick={onHome} style={{fontSize:12,padding:"5px 8px"}}>{guestMode?"✕ Exit":"← Home"}</Btn><h1 style={{fontSize:"2.4vh",fontWeight:800,letterSpacing:-.5,color:T.text,margin:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{game.name}</h1>{guestMode&&<span style={{fontSize:10,fontWeight:700,color:T.success,background:T.success+"14",padding:"2px 6px",borderRadius:10,letterSpacing:.5,textTransform:"uppercase",flexShrink:0}}>🌐 Shared</span>}</div>
         <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
@@ -995,7 +1272,6 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           <Btn onClick={reset} style={{borderColor:T.danger,color:T.danger,fontSize:12,padding:"6px 12px"}}>Reset</Btn>
           <Btn variant="ghost" onClick={toggleFS} style={{fontSize:12,padding:"6px 8px"}}>⛶</Btn>
           {!guestMode&&<Btn variant="ghost" onClick={onEdit} style={{fontSize:12,padding:"6px 8px"}}>✎</Btn>}
-          <SettingsDropdown showSB={showSB} setShowSB={setShowSB} pointStep={pointStep} setPointStep={setPointStep} autoFit={autoFit} setAutoFit={setAutoFit}/>
         </div>
       </div>
       {showSB&&<div style={{flexShrink:0,marginBottom:"0.4vh",position:"relative",zIndex:1}}><Scoreboard scores={scores} setScores={setScores} pointStep={pointStep}/></div>}
@@ -1005,13 +1281,27 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
             const box=origIdx<boxes.length?boxes[origIdx]:null;const isV=visited[origIdx];
             if(!box)return<div key={origIdx} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,opacity:.06}}/>;
             const cat=categories[box.catIdx]||{name:"?",color:"#999"};
-            const cellBg=box.bgOverride||theme.cellBg||T.surface;
+            const cellBg=cellBgCss(box,theme,T.surface);
             const borderColor=box.borderOverride||cat.color;
             const outerBorder=box.borderOverride||theme.cellBorder||T.border;
+            const cellOpacity=box.cellOpacity!=null?box.cellOpacity:(theme.cellOpacity??1);
+            const hasGrad=(box.bgOverrideType==="gradient"||(!box.bgOverride&&theme.cellType==="gradient"));
             return(<div key={origIdx} onClick={()=>!isV&&openQuestion(origIdx)}
               onContextMenu={e=>{e.preventDefault();if(isV)unvisit(origIdx)}}
-              style={{background:cellBg,border:`1px solid ${outerBorder}`,borderRadius:10,borderLeft:`4px solid ${borderColor}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:"0.3vh",transition:"transform .12s,box-shadow .12s,opacity .2s",userSelect:"none",overflow:"hidden",...(isV?{opacity:.2,background:"#e5e4e0",cursor:"context-menu"}:{cursor:"pointer"})}}>
-              <span style={{fontWeight:800,fontSize:`clamp(.55rem,${cfv}vh,1.8rem)`,lineHeight:1.1,letterSpacing:-.3,color:isV?"#999":cat.color,...(isV?strike:{})}}>{cat.name}</span>
+              style={{
+                background:isV?"#e5e4e0":cellBg,
+                border:`1px solid ${outerBorder}`,
+                borderRadius:10,
+                borderLeft:`4px solid ${borderColor}`,
+                display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+                gap:"0.3vh",
+                transition:"transform .12s,box-shadow .12s,opacity .2s",
+                userSelect:"none",overflow:"hidden",
+                opacity:isV?0.2:cellOpacity,
+                cursor:isV?"context-menu":"pointer",
+                boxShadow:(!isV&&theme.cellShadow)?"0 4px 12px rgba(0,0,0,.2)":"none",
+              }}>
+              <span style={{fontWeight:800,fontSize:`clamp(.55rem,${cfv}vh,1.8rem)`,lineHeight:1.1,letterSpacing:-.3,color:isV?"#999":cat.color,textShadow:(!isV&&hasGrad)?"0 1px 2px rgba(255,255,255,.4)":"none",...(isV?strike:{})}}>{cat.name}</span>
               <span style={{fontWeight:500,fontSize:`clamp(.4rem,${sfv}vh,1.1rem)`,lineHeight:1.1,color:isV?"#bbb":T.textSoft,...(isV?strike:{})}}>{box.subtitle}</span>
             </div>);
           })}
