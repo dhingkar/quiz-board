@@ -16,8 +16,55 @@ const T = {
   font:"'Outfit','Segoe UI',-apple-system,BlinkMacSystemFont,sans-serif",
   fontMono:"'JetBrains Mono','SF Mono',monospace",
 };
-const FL="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap";
-function injectFont(){if(!document.querySelector(`link[href*="Outfit"]`)){const l=document.createElement("link");l.rel="stylesheet";l.href=FL;document.head.appendChild(l);}}
+/* ═══ FONTS ═══ */
+// Each entry: family (CSS), display name, Google Fonts spec, available weights
+const FONTS = [
+  { id: "outfit",     name: "Outfit (default)",  family: "'Outfit',sans-serif",                       google: "Outfit:wght@300;400;500;600;700;800;900",        weights: [300,400,500,600,700,800,900] },
+  { id: "inter",      name: "Inter",             family: "'Inter',sans-serif",                        google: "Inter:wght@300;400;500;600;700;800;900",         weights: [300,400,500,600,700,800,900] },
+  { id: "playfair",   name: "Playfair Display",  family: "'Playfair Display',serif",                  google: "Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700", weights: [400,500,600,700,800,900] },
+  { id: "lora",       name: "Lora (serif)",      family: "'Lora',serif",                              google: "Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,700", weights: [400,500,600,700] },
+  { id: "merriweather", name: "Merriweather",    family: "'Merriweather',serif",                      google: "Merriweather:ital,wght@0,300;0,400;0,700;0,900;1,300;1,400", weights: [300,400,700,900] },
+  { id: "bebas",      name: "Bebas Neue",        family: "'Bebas Neue',sans-serif",                   google: "Bebas+Neue",                                      weights: [400] },
+  { id: "montserrat", name: "Montserrat",        family: "'Montserrat',sans-serif",                   google: "Montserrat:wght@300;400;500;600;700;800;900",    weights: [300,400,500,600,700,800,900] },
+  { id: "poppins",    name: "Poppins",           family: "'Poppins',sans-serif",                      google: "Poppins:wght@300;400;500;600;700;800;900",       weights: [300,400,500,600,700,800,900] },
+  { id: "raleway",    name: "Raleway",           family: "'Raleway',sans-serif",                      google: "Raleway:wght@300;400;500;600;700;800;900",       weights: [300,400,500,600,700,800,900] },
+  { id: "oswald",     name: "Oswald",            family: "'Oswald',sans-serif",                       google: "Oswald:wght@300;400;500;600;700",                weights: [300,400,500,600,700] },
+  { id: "abril",      name: "Abril Fatface",     family: "'Abril Fatface',serif",                     google: "Abril+Fatface",                                   weights: [400] },
+  { id: "dancing",    name: "Dancing Script",    family: "'Dancing Script',cursive",                  google: "Dancing+Script:wght@400;500;600;700",            weights: [400,500,600,700] },
+  { id: "spacemono",  name: "Space Mono",        family: "'Space Mono',monospace",                    google: "Space+Mono:wght@400;700",                         weights: [400,700] },
+  { id: "georgia",    name: "Georgia (system)",  family: "Georgia,serif",                             google: null,                                              weights: [400,700] },
+  { id: "helvetica",  name: "Helvetica (system)",family: "Helvetica,Arial,sans-serif",                google: null,                                              weights: [400,700] },
+];
+const FONT_BY_ID = Object.fromEntries(FONTS.map(f => [f.id, f]));
+const WEIGHT_LABEL = { 300:"Light", 400:"Regular", 500:"Medium", 600:"SemiBold", 700:"Bold", 800:"ExtraBold", 900:"Black" };
+
+function injectFont(fontIds = ["outfit"]) {
+  for (const id of fontIds) {
+    const f = FONT_BY_ID[id];
+    if (!f || !f.google) continue;
+    const href = `https://fonts.googleapis.com/css2?family=${f.google}&display=swap`;
+    if (!document.querySelector(`link[href="${href}"]`)) {
+      const l = document.createElement("link");
+      l.rel = "stylesheet";
+      l.href = href;
+      document.head.appendChild(l);
+    }
+  }
+}
+
+// Resolve effective font/weight/alignment given per-cell override + theme + defaults
+function resolveTextStyle(box, theme, kind /* "question"|"answer" */) {
+  const ov = (box && box.textStyle && box.textStyle[kind]) || {};
+  const t = (theme && theme.textStyle && theme.textStyle[kind]) || {};
+  const fontId = ov.font || t.font || "outfit";
+  const f = FONT_BY_ID[fontId] || FONT_BY_ID.outfit;
+  return {
+    fontFamily: f.family,
+    fontWeight: ov.weight || t.weight || 700,
+    textAlign: ov.align || t.align || "center",
+    fontId,
+  };
+}
 
 /* ═══ HELPERS ═══ */
 function shuffle(a){const b=[...a];for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]]}return b}
@@ -109,6 +156,11 @@ const DG={name:"Untitled Game",columns:5,rows:5,timerSeconds:0,
     autoFit:false,
     showScoreboard:false,
     pointStep:100,
+    // Text styling (default for all questions/answers)
+    textStyle:{
+      question:{font:"outfit",weight:700,align:"center"},
+      answer:{font:"outfit",weight:700,align:"center"},
+    },
   }};
 
 /* ═══ RICH TEXT ═══
@@ -310,7 +362,7 @@ function Timer({seconds}){
    Shrinks text until it fits within parent without scrolling.
    Uses a ref to measure and binary-search the right font size.
 */
-function AutoFitText({html,baseSizePx=80,minSizePx=14,style={}}){
+function AutoFitText({html,baseSizePx=80,minSizePx=14,style={},fontFamily,fontWeight,textAlign}){
   const outerRef=useRef(null);const innerRef=useRef(null);const[fs,setFs]=useState(baseSizePx);
   useEffect(()=>{
     if(!outerRef.current||!innerRef.current)return;
@@ -321,10 +373,10 @@ function AutoFitText({html,baseSizePx=80,minSizePx=14,style={}}){
       if(el.scrollHeight<=ct.clientHeight&&el.scrollWidth<=ct.clientWidth){best=mid;lo=mid+1}else{hi=mid-1}
     }
     setFs(best);
-  },[html,baseSizePx]);
+  },[html,baseSizePx,fontFamily,fontWeight,textAlign]);
   return(
     <div ref={outerRef} style={{width:"100%",overflow:"hidden",...style}}>
-      <div ref={innerRef} style={{fontSize:fs,lineHeight:1.3,color:T.text,fontWeight:700,letterSpacing:-.5,fontFamily:T.font,wordBreak:"break-word"}} dangerouslySetInnerHTML={{__html:html}}/>
+      <div ref={innerRef} style={{fontSize:fs,lineHeight:1.3,color:T.text,fontWeight:fontWeight??700,letterSpacing:fontWeight&&fontWeight<500?0:-.3,fontFamily:fontFamily||T.font,textAlign:textAlign||"center",wordBreak:"break-word"}} dangerouslySetInnerHTML={{__html:html}}/>
     </div>
   );
 }
@@ -451,11 +503,29 @@ async function exportGameHTML(game){
 }
 
 function generateHTMLFile(game){
+  // Collect all fonts used in this game (theme defaults + per-question overrides)
+  const fontIds=new Set();
+  const ts=game.theme?.textStyle||{};
+  if(ts.question?.font)fontIds.add(ts.question.font);
+  if(ts.answer?.font)fontIds.add(ts.answer.font);
+  for(const b of game.boxes){
+    if(b.textStyle?.question?.font)fontIds.add(b.textStyle.question.font);
+    if(b.textStyle?.answer?.font)fontIds.add(b.textStyle.answer.font);
+  }
+  fontIds.add("outfit"); // always include default
+  const fontLinks=[...fontIds].map(id=>{
+    const f=FONT_BY_ID[id];
+    if(!f||!f.google)return"";
+    return`<link href="https://fonts.googleapis.com/css2?family=${f.google}&display=swap" rel="stylesheet">`;
+  }).join("\n");
+  // Build a JS-side font map for runtime use
+  const fontMapJs=JSON.stringify(Object.fromEntries(FONTS.map(f=>[f.id,f.family])));
+
   const d=JSON.stringify(game).replace(/<\/script>/gi,"<\\/script>");
   const html=`<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>${(game.name||"Quiz Board").replace(/</g,"&lt;")}</title>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+${fontLinks}
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden}
@@ -464,8 +534,8 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 .topbar h1{font-size:2.4vh;font-weight:800;letter-spacing:-.5px;color:#1c1917}
 .gwrap{flex:1;position:relative;min-height:0}
 .grid{position:absolute;inset:0;display:grid}
-.cell{background:#fff;border:1px solid #e6e4df;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3vh;cursor:pointer;transition:transform .12s,box-shadow .12s,opacity .2s;user-select:none;overflow:hidden}
-.cell:hover:not(.v){transform:scale(1.03);box-shadow:0 4px 16px rgba(0,0,0,.08)}
+.cell{background:#fff;border:1px solid #e6e4df;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3vh;cursor:pointer;transition:transform .15s,box-shadow .15s,opacity .2s,border-color .15s;user-select:none;overflow:hidden;position:relative}
+.cell:hover:not(.v),.cell.hl:not(.v){transform:scale(1.06);box-shadow:0 12px 32px rgba(0,0,0,.18);z-index:5}
 .cell.v{opacity:.2;background:#e5e4e0;cursor:default}.cell.v span{text-decoration:line-through;text-decoration-color:#c43040;text-decoration-thickness:2.5px}
 .pill{font-family:inherit;font-weight:600;font-size:12px;cursor:pointer;border-radius:50px;transition:all .15s;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1.5px solid #e6e4df;background:#fff;color:#1c1917;padding:6px 12px;line-height:1}
 .qpage{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;padding:1.5vh 1.5vw;background:#f4f3f0;overflow:hidden}
@@ -484,7 +554,7 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 .q-btns{display:flex;gap:12px;flex-shrink:0;justify-content:center;padding-top:.8vh}
 .hint{color:#a8a29e;font-size:11px;margin-top:6px;text-align:center;flex-shrink:0}
 .fittext{width:100%;overflow:hidden;flex:0 1 auto}
-.fittext-inner{line-height:1.3;color:#1c1917;font-weight:700;letter-spacing:-.5px;word-break:break-word}
+.fittext-inner{line-height:1.3;color:#1c1917;word-break:break-word}
 </style></head><body>
 <div class="page" id="gridPage">
 <div id="bgLayer" style="position:absolute;inset:0;pointer-events:none;z-index:0"></div>
@@ -523,7 +593,25 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 const G=${d};
 const cats=G.categories,boxes=G.boxes,COLS=G.columns,ROWS=G.rows,TIMER=G.timerSeconds||0;
 const THEME=G.theme||{};
-let order=boxes.map((_,i)=>i),visited={},curIdx=null,onAnswerPage=false;
+const FONT_MAP=${fontMapJs};
+function resolveStyle(box,kind){
+  const ov=(box&&box.textStyle&&box.textStyle[kind])||{};
+  const t=(THEME.textStyle&&THEME.textStyle[kind])||{};
+  const fontId=ov.font||t.font||"outfit";
+  return{
+    fontFamily:FONT_MAP[fontId]||FONT_MAP["outfit"],
+    fontWeight:ov.weight||t.weight||700,
+    textAlign:ov.align||t.align||"center",
+  };
+}
+function applyStyle(el,box,kind){
+  const s=resolveStyle(box,kind);
+  el.style.fontFamily=s.fontFamily;
+  el.style.fontWeight=s.fontWeight;
+  el.style.textAlign=s.textAlign;
+  el.style.letterSpacing=s.fontWeight<500?"0":"-0.3px";
+}
+let order=boxes.map((_,i)=>i),visited={},curIdx=null,onAnswerPage=false,highlightPos=null;
 const grid=document.getElementById("grid");
 grid.style.gridTemplateColumns="repeat("+COLS+",1fr)";
 grid.style.gridTemplateRows="repeat("+ROWS+",1fr)";
@@ -559,8 +647,8 @@ function fitText(outerId,innerId,maxPx,minPx){
     if(inner.scrollHeight<=outer.clientHeight&&inner.scrollWidth<=outer.clientWidth){best=mid;lo=mid+1}else{hi=mid-1}}
   inner.style.fontSize=best+"px";
 }
-function buildGrid(){grid.innerHTML="";order.slice(0,COLS*ROWS).forEach(idx=>{
-const box=idx<boxes.length?boxes[idx]:null;const d=document.createElement("div");d.className="cell"+(visited[idx]?" v":"");
+function buildGrid(){grid.innerHTML="";order.slice(0,COLS*ROWS).forEach((idx,pos)=>{
+const box=idx<boxes.length?boxes[idx]:null;const d=document.createElement("div");d.className="cell"+(visited[idx]?" v":"")+((pos===highlightPos&&!visited[idx])?" hl":"");
 if(!box){d.style.opacity="0.06";grid.appendChild(d);return}
 const cat=cats[box.catIdx]||{name:"?",color:"#999"};
 const cellBg=cellBgCss(box);
@@ -569,9 +657,10 @@ const outerBorder=box.borderOverride||THEME.cellBorder||"#e6e4df";
 const cellOpacity=box.cellOpacity!=null?box.cellOpacity:(THEME.cellOpacity!=null?THEME.cellOpacity:1);
 if(!visited[idx]){
   d.style.background=cellBg;
-  d.style.border="1px solid "+outerBorder;
+  d.style.border=(pos===highlightPos?"2px":"1px")+" solid "+(pos===highlightPos?borderColor:outerBorder);
   d.style.opacity=cellOpacity;
-  if(THEME.cellShadow)d.style.boxShadow="0 4px 12px rgba(0,0,0,.2)";
+  if(pos===highlightPos)d.style.boxShadow="0 12px 32px "+borderColor+"55, 0 0 0 3px "+borderColor+"22";
+  else if(THEME.cellShadow)d.style.boxShadow="0 4px 12px rgba(0,0,0,.2)";
 }
 d.style.borderLeft="4px solid "+borderColor;
 const c=document.createElement("span");c.style.cssText="font-weight:800;font-size:clamp(0.55rem,"+cfv+"vh,1.8rem);line-height:1.1;letter-spacing:-0.3px;color:"+(visited[idx]?"#999":cat.color);c.textContent=cat.name;
@@ -580,9 +669,10 @@ d.appendChild(c);d.appendChild(s);
 if(!visited[idx])d.addEventListener("click",()=>showQ(idx));
 d.addEventListener("contextmenu",e=>{e.preventDefault();if(visited[idx]){delete visited[idx];buildGrid()}});
 grid.appendChild(d)})}
-function showQ(idx){visited[idx]=true;curIdx=idx;onAnswerPage=false;const box=boxes[idx],cat=cats[box.catIdx]||{name:"?",color:"#999"};
+function showQ(idx){visited[idx]=true;curIdx=idx;onAnswerPage=false;highlightPos=null;const box=boxes[idx],cat=cats[box.catIdx]||{name:"?",color:"#999"};
 document.getElementById("qCat").textContent=cat.name;document.getElementById("qCat").style.color=cat.color;
-document.getElementById("qSub").textContent=box.subtitle;document.getElementById("qText").innerHTML=box.question||"";
+document.getElementById("qSub").textContent=box.subtitle;
+const qTextEl=document.getElementById("qText");qTextEl.innerHTML=box.question||"";applyStyle(qTextEl,box,"question");
 document.getElementById("qCard").style.borderTop="5px solid "+cat.color;
 const media=document.getElementById("qMedia");media.innerHTML="";media.classList.add("hidden");
 if(box.imageUrl){const img=document.createElement("img");img.src=box.imageUrl;img.style.cursor="zoom-in";img.onclick=()=>openLightbox(box.imageUrl);img.onerror=()=>img.style.display="none";media.appendChild(img);media.classList.remove("hidden")}
@@ -591,7 +681,8 @@ const rb=document.getElementById("revealBtn"),ab=document.getElementById("answer
 const hasA=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim());
 const hasAImg=box.answerImageUrl&&box.answerImageUrl.trim();
 if(hasA){rb.classList.remove("hidden");rb.style.background=cat.color+"14";rb.style.color=cat.color;rb.style.border="2px solid "+cat.color+"44";rb.textContent=hasAImg?"Reveal Answer →":"Reveal Answer"}else{rb.classList.add("hidden")}
-ab.classList.add("hidden");document.getElementById("aText").innerHTML=box.answer||"";
+ab.classList.add("hidden");
+const aTextEl=document.getElementById("aText");aTextEl.innerHTML=box.answer||"";applyStyle(aTextEl,box,"answer");
 document.getElementById("gridPage").classList.add("hidden");document.getElementById("qPage").classList.remove("hidden");document.getElementById("answerPage").classList.add("hidden");
 const tb=document.getElementById("qTimer");if(TIMER>0){tb.classList.remove("hidden");startTimer(TIMER)}else{tb.classList.add("hidden")}
 setTimeout(()=>{fitText("qFit","qText",80,14)},50);
@@ -600,7 +691,7 @@ function revealAnswer(){
 const box=boxes[curIdx],cat=cats[box.catIdx]||{name:"?",color:"#999"};
 const hasAImg=box.answerImageUrl&&box.answerImageUrl.trim();
 if(hasAImg){document.getElementById("aCat2").textContent=cat.name+" — Answer";
-document.getElementById("aText2").innerHTML=box.answer||"";
+const aTextEl2=document.getElementById("aText2");aTextEl2.innerHTML=box.answer||"";applyStyle(aTextEl2,box,"answer");
 const c=document.getElementById("aImg2");c.innerHTML="";
 const img=document.createElement("img");img.src=box.answerImageUrl;img.style.cssText="max-width:100%;max-height:40vh;border-radius:12px;object-fit:contain;border:1px solid #04a87e44;cursor:zoom-in";img.onclick=()=>openLightbox(box.answerImageUrl);img.onerror=()=>img.style.display="none";c.appendChild(img);
 document.getElementById("qPage").classList.add("hidden");document.getElementById("answerPage").classList.remove("hidden");
@@ -624,11 +715,45 @@ function closeLightbox(){
 }
 window.addEventListener("popstate",()=>{if(!document.getElementById("lightbox").classList.contains("hidden")){closeLightbox();return}if(onAnswerPage){backToQ()}else if(curIdx!==null){goBack()}});
 document.addEventListener("keydown",e=>{
-  if(e.key==="Escape"){
-    if(!document.getElementById("lightbox").classList.contains("hidden")){closeLightbox();return}
-    if(onAnswerPage)backToQ();else goBack();
+  // Lightbox: any key on lightbox first
+  if(!document.getElementById("lightbox").classList.contains("hidden")){
+    if(e.key==="Escape"){closeLightbox();return}
+    return;
   }
-  if(e.key===" "&&!document.getElementById("revealBtn").classList.contains("hidden")&&document.getElementById("lightbox").classList.contains("hidden")){e.preventDefault();revealAnswer()}
+  // Question/answer pages
+  if(curIdx!==null){
+    if(e.key==="Escape"){if(onAnswerPage)backToQ();else goBack()}
+    if(e.key===" "&&!document.getElementById("revealBtn").classList.contains("hidden")){e.preventDefault();revealAnswer()}
+    return;
+  }
+  // Grid page: keyboard navigation
+  if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)){
+    e.preventDefault();
+    if(highlightPos===null){highlightPos=0}
+    else{
+      let next=highlightPos;
+      if(e.key==="ArrowRight")next++;
+      else if(e.key==="ArrowLeft")next--;
+      else if(e.key==="ArrowDown")next+=COLS;
+      else if(e.key==="ArrowUp")next-=COLS;
+      const total=COLS*ROWS;
+      const prevRow=Math.floor(highlightPos/COLS);
+      const nextRow=Math.floor(next/COLS);
+      if(next<0||next>=total)highlightPos=null;
+      else if((e.key==="ArrowRight"||e.key==="ArrowLeft")&&nextRow!==prevRow)highlightPos=null;
+      else highlightPos=next;
+    }
+    buildGrid();
+    return;
+  }
+  if(e.key==="Escape"&&highlightPos!==null){highlightPos=null;buildGrid();return}
+  if((e.key==="Enter"||e.key===" ")&&highlightPos!==null){
+    const origIdx=order[highlightPos];
+    if(origIdx!=null&&origIdx<boxes.length&&!visited[origIdx]){
+      e.preventDefault();
+      showQ(origIdx);
+    }
+  }
 });
 buildGrid();
 <\/script></body></html>`;
@@ -869,6 +994,51 @@ function ThemePanel({theme,updateTheme}){
         </div>
 
         <p style={{fontSize:11,color:T.textMuted,margin:0}}>Per-cell overrides take priority over these</p>
+      </div>
+
+      {/* TYPOGRAPHY */}
+      <div style={{display:"flex",flexDirection:"column",gap:14,gridColumn:"1 / -1"}}>
+        <span style={lbl}>Typography (game default)</span>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:16}}>
+          {["question","answer"].map(kind=>{
+            const ts=(theme.textStyle&&theme.textStyle[kind])||{font:"outfit",weight:700,align:"center"};
+            const updTS=(field,value)=>{
+              const next={...(theme.textStyle||{})};
+              next[kind]={...(next[kind]||{font:"outfit",weight:700,align:"center"}),[field]:value};
+              updateTheme("textStyle",next);
+            };
+            const fontDef=FONT_BY_ID[ts.font]||FONT_BY_ID.outfit;
+            return(<div key={kind} style={{display:"flex",flexDirection:"column",gap:6,padding:"10px 12px",background:T.surface,borderRadius:10,border:`1px solid ${T.border}`}}>
+              <span style={{fontSize:11,fontWeight:700,color:kind==="question"?T.text:T.success,textTransform:"uppercase",letterSpacing:1.5}}>{kind}</span>
+              {/* Font */}
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={subLbl}>Font</span>
+                <select value={ts.font} onChange={e=>updTS("font",e.target.value)} style={{flex:1,padding:"6px 8px",border:`1.5px solid ${T.border}`,borderRadius:6,fontSize:12,fontFamily:T.font,background:T.surface,cursor:"pointer"}}>
+                  {FONTS.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+              </div>
+              {/* Weight */}
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={subLbl}>Weight</span>
+                <select value={ts.weight} onChange={e=>updTS("weight",parseInt(e.target.value))} style={{flex:1,padding:"6px 8px",border:`1.5px solid ${T.border}`,borderRadius:6,fontSize:12,fontFamily:T.font,background:T.surface,cursor:"pointer"}}>
+                  {fontDef.weights.map(w=><option key={w} value={w}>{w} — {WEIGHT_LABEL[w]||""}</option>)}
+                </select>
+              </div>
+              {/* Align */}
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={subLbl}>Align</span>
+                <div style={{display:"flex",gap:4}}>
+                  {["left","center","right"].map(a=><button key={a} onClick={()=>updTS("align",a)}
+                    style={{padding:"5px 10px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",border:"none",background:ts.align===a?T.text:T.bg,color:ts.align===a?"#fff":T.textSoft,fontFamily:T.font}}>{a.charAt(0).toUpperCase()+a.slice(1)}</button>)}
+                </div>
+              </div>
+              {/* Preview */}
+              <div style={{marginTop:4,padding:"10px 12px",background:T.bg,borderRadius:8,border:`1px solid ${T.borderLight}`,fontFamily:fontDef.family,fontWeight:ts.weight,textAlign:ts.align,fontSize:18,color:T.text,minHeight:36}}>
+                The quick brown fox
+              </div>
+            </div>);
+          })}
+        </div>
       </div>
     </div>
   </div>);
@@ -1146,6 +1316,52 @@ function Editor({game,onSave,onPlay,onBack}){
           </div>
         </div>
 
+        {/* Per-cell typography overrides */}
+        <div style={{marginTop:6,paddingTop:10,borderTop:`1px solid ${T.borderLight}`}}>
+          <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Typography (override)</span>
+          {["question","answer"].map(kind=>{
+            const ts=(editBox.textStyle&&editBox.textStyle[kind])||{};
+            const themeTS=(theme.textStyle&&theme.textStyle[kind])||{font:"outfit",weight:700,align:"center"};
+            const hasOverride=ts.font!=null||ts.weight!=null||ts.align!=null;
+            const updTS=(field,value)=>{
+              const next={...(editBox.textStyle||{})};
+              next[kind]={...(next[kind]||{}),[field]:value};
+              updateCell(editIdx,"textStyle",next);
+            };
+            const clearAll=()=>{
+              const next={...(editBox.textStyle||{})};
+              delete next[kind];
+              updateCell(editIdx,"textStyle",next);
+            };
+            const fontDef=FONT_BY_ID[ts.font||themeTS.font]||FONT_BY_ID.outfit;
+            return(<div key={kind} style={{marginTop:8}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+                <span style={{fontSize:11,fontWeight:600,color:kind==="question"?T.textSoft:T.success,textTransform:"uppercase",letterSpacing:1}}>{kind}</span>
+                {hasOverride&&<button onClick={clearAll} style={{background:"none",border:"none",fontSize:10,color:T.danger,cursor:"pointer",fontFamily:T.font,fontWeight:600}}>Use default</button>}
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                <span style={{fontSize:11,color:T.textSoft,width:44}}>Font</span>
+                <select value={ts.font||themeTS.font||"outfit"} onChange={e=>updTS("font",e.target.value)} style={{flex:1,padding:"5px 8px",border:`1.5px solid ${ts.font?T.text:T.borderLight}`,borderRadius:6,fontSize:11,fontFamily:T.font,background:T.surface,cursor:"pointer"}}>
+                  {FONTS.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}
+                </select>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                <span style={{fontSize:11,color:T.textSoft,width:44}}>Weight</span>
+                <select value={ts.weight||themeTS.weight||700} onChange={e=>updTS("weight",parseInt(e.target.value))} style={{flex:1,padding:"5px 8px",border:`1.5px solid ${ts.weight?T.text:T.borderLight}`,borderRadius:6,fontSize:11,fontFamily:T.font,background:T.surface,cursor:"pointer"}}>
+                  {fontDef.weights.map(w=><option key={w} value={w}>{w} — {WEIGHT_LABEL[w]||""}</option>)}
+                </select>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:11,color:T.textSoft,width:44}}>Align</span>
+                <div style={{display:"flex",gap:3}}>
+                  {["left","center","right"].map(a=><button key={a} onClick={()=>updTS("align",a)}
+                    style={{padding:"4px 8px",borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer",border:`1.5px solid ${ts.align===a?T.text:T.borderLight}`,background:ts.align===a?T.text:"transparent",color:ts.align===a?"#fff":T.textSoft,fontFamily:T.font}}>{a.charAt(0).toUpperCase()+a.slice(1)}</button>)}
+                </div>
+              </div>
+            </div>);
+          })}
+        </div>
+
         {/* Navigation */}
         <div style={{display:"flex",gap:6,marginTop:8,borderTop:`1px solid ${T.borderLight}`,paddingTop:12}}>
           <Btn variant="ghost" onClick={()=>setEditIdx(Math.max(0,editIdx-1))} disabled={editIdx<=0} style={{fontSize:12,flex:1,justifyContent:"center",opacity:editIdx<=0?.3:1}}>← Prev</Btn>
@@ -1171,6 +1387,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   const[showAnswer,setShowAnswer]=useState(false);
   const[scores,setScores]=useState([]);
   const[lightboxSrc,setLightboxSrc]=useState(null);
+  const[highlightPos,setHighlightPos]=useState(null); // grid position (0..total-1), not origIdx
 
   const cfv=Math.min(2.8,15/rows),sfv=Math.min(2,10/rows);
   const total=columns*rows;
@@ -1208,16 +1425,59 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
 
   useEffect(()=>{
     const h=e=>{
-      if(e.key==="Escape"){e.preventDefault();goBack()}
-      if(e.key===" "&&activeIdx!==null&&!showAnswer){e.preventDefault();revealAns()}
+      // Ignore if typing in an input (so it doesn't interfere with the scoreboard player name input)
+      const tag=(e.target?.tagName||"").toLowerCase();
+      if(tag==="input"||tag==="textarea"||e.target?.isContentEditable)return;
+
+      // Question/answer view shortcuts
+      if(activeIdx!==null){
+        if(e.key==="Escape"){e.preventDefault();goBack()}
+        if(e.key===" "&&!showAnswer){e.preventDefault();revealAns()}
+        return;
+      }
+
+      // Grid view: arrow nav + enter/space to open
+      if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)){
+        e.preventDefault();
+        setHighlightPos(prev=>{
+          if(prev===null){
+            // First arrow: enter at top-left
+            return 0;
+          }
+          let next=prev;
+          if(e.key==="ArrowRight")next=prev+1;
+          else if(e.key==="ArrowLeft")next=prev-1;
+          else if(e.key==="ArrowDown")next=prev+columns;
+          else if(e.key==="ArrowUp")next=prev-columns;
+          // Check bounds
+          if(next<0||next>=total)return null; // out of bounds → clear
+          // Check row wrap on left/right
+          if(e.key==="ArrowRight"&&Math.floor(next/columns)!==Math.floor(prev/columns))return null;
+          if(e.key==="ArrowLeft"&&Math.floor(next/columns)!==Math.floor(prev/columns))return null;
+          return next;
+        });
+        return;
+      }
+      if(e.key==="Escape"){
+        if(highlightPos!==null){e.preventDefault();setHighlightPos(null)}
+      }
+      if((e.key==="Enter"||e.key===" ")&&highlightPos!==null){
+        const origIdx=order[highlightPos];
+        if(origIdx!=null&&origIdx<boxes.length&&!visited[origIdx]){
+          e.preventDefault();
+          openQuestion(origIdx);
+          setHighlightPos(null);
+        }
+      }
     };
     window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);
-  },[activeIdx,showAnswer]);
+  },[activeIdx,showAnswer,highlightPos,columns,total,order,visited,boxes.length]);
 
   // ─── ANSWER PAGE (separate full page when answer has image) ───
   if(activeIdx!==null&&activeIdx<boxes.length&&showAnswer){
     const box=boxes[activeIdx];const cat=categories[box.catIdx]||{name:"?",color:"#999"};
     const hasImg=box.answerImageUrl&&box.answerImageUrl.trim();
+    const aStyle=resolveTextStyle(box,theme,"answer");
 
     if(autoFit){
       return(<>
@@ -1226,7 +1486,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:0}}>
             <div style={{background:"#f0faf6",border:`1.5px solid ${T.success}33`,borderRadius:20,padding:"2.5vh 2.5vw",maxWidth:1200,width:"100%",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",overflow:"hidden",maxHeight:"84vh"}}>
               <div style={{fontSize:"clamp(.7rem,1.6vh,.9rem)",fontWeight:700,textTransform:"uppercase",letterSpacing:2,color:T.success,marginBottom:".3vh",flexShrink:0}}>{cat.name} — Answer</div>
-              {box.answer&&box.answer.trim()&&<AutoFitText html={box.answer} baseSizePx={80} minSizePx={14} style={{flex:"0 1 auto",maxHeight:hasImg?"30vh":"50vh"}}/>}
+              {box.answer&&box.answer.trim()&&<AutoFitText html={box.answer} baseSizePx={80} minSizePx={14} fontFamily={aStyle.fontFamily} fontWeight={aStyle.fontWeight} textAlign={aStyle.textAlign} style={{flex:"0 1 auto",maxHeight:hasImg?"30vh":"50vh"}}/>}
               {hasImg&&<img src={box.answerImageUrl} alt="" onClick={()=>setLightboxSrc(box.answerImageUrl)} style={{maxWidth:"100%",flex:"0 1 auto",maxHeight:"40vh",borderRadius:12,objectFit:"contain",marginTop:"1.5vh",border:`1px solid ${T.success}44`,cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/>}
             </div>
           </div>
@@ -1241,7 +1501,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
       <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",alignItems:"center",padding:"2vh 2vw",background:T.bg,fontFamily:T.font,overflowY:"auto"}}>
         <div style={{background:"#f0faf6",border:`1.5px solid ${T.success}33`,borderRadius:24,padding:"4vh 3vw",maxWidth:1100,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",marginTop:"auto",marginBottom:"2vh"}}>
           <div style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:3,color:T.success,marginBottom:"1vh"}}>{cat.name} — Answer</div>
-          {box.answer&&box.answer.trim()&&<div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:700,fontFamily:T.font}} dangerouslySetInnerHTML={{__html:box.answer}}/>}
+          {box.answer&&box.answer.trim()&&<div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:aStyle.fontWeight,fontFamily:aStyle.fontFamily,textAlign:aStyle.textAlign}} dangerouslySetInnerHTML={{__html:box.answer}}/>}
           {hasImg&&<div style={{marginTop:"2vh"}}><img src={box.answerImageUrl} alt="" onClick={()=>setLightboxSrc(box.answerImageUrl)} style={{maxWidth:"100%",maxHeight:"50vh",borderRadius:12,objectFit:"contain",border:`1px solid ${T.success}44`,cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/></div>}
         </div>
         <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><Btn onClick={goBack} style={{fontSize:15,padding:"12px 32px"}}>← Back to Question</Btn></div>
@@ -1254,6 +1514,8 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
     const box=boxes[activeIdx];const cat=categories[box.catIdx]||{name:"?",color:"#999"};
     const hasAnswer=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim());
     const hasAnswerImg=box.answerImageUrl&&box.answerImageUrl.trim();
+    const qStyle=resolveTextStyle(box,theme,"question");
+    const aStyleInline=resolveTextStyle(box,theme,"answer");
     // If answer has image → reveal goes to separate page. If no image → inline reveal.
 
     if(autoFit){
@@ -1264,7 +1526,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
             <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:20,padding:"2vh 2.5vw",maxWidth:1200,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",borderTop:`5px solid ${cat.color}`,display:"flex",flexDirection:"column",alignItems:"center",overflow:"hidden",maxHeight:"82vh"}}>
               <div style={{fontWeight:800,fontSize:"clamp(.8rem,2.2vh,1.3rem)",textTransform:"uppercase",letterSpacing:3,marginBottom:".3vh",color:cat.color,fontFamily:T.font,flexShrink:0}}>{cat.name}</div>
               <div style={{fontWeight:500,fontSize:"clamp(.7rem,1.8vh,1rem)",color:T.textSoft,marginBottom:"1.5vh",flexShrink:0}}>{box.subtitle}</div>
-              <AutoFitText html={box.question} baseSizePx={80} minSizePx={14} style={{flex:"0 1 auto",maxHeight:"40vh"}}/>
+              <AutoFitText html={box.question} baseSizePx={80} minSizePx={14} fontFamily={qStyle.fontFamily} fontWeight={qStyle.fontWeight} textAlign={qStyle.textAlign} style={{flex:"0 1 auto",maxHeight:"40vh"}}/>
               {(box.imageUrl||ytId(box.videoUrl))&&<div style={{flexShrink:0,maxHeight:"20vh",overflow:"hidden",marginTop:"1.5vh",width:"100%",display:"flex",justifyContent:"center"}}>
                 {box.imageUrl&&<img src={box.imageUrl} alt="" onClick={()=>setLightboxSrc(box.imageUrl)} style={{maxWidth:"100%",maxHeight:"20vh",borderRadius:10,objectFit:"contain",cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/>}
                 {ytId(box.videoUrl)&&<div style={{width:"100%",maxWidth:400,aspectRatio:"16/9",borderRadius:10,overflow:"hidden"}}><iframe src={`https://www.youtube.com/embed/${ytId(box.videoUrl)}`} title="Video" style={{width:"100%",height:"100%",border:"none"}} allowFullScreen/></div>}
@@ -1274,7 +1536,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
               {hasAnswer&&hasAnswerImg&&<button onClick={revealAns} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,flexShrink:0}}>Reveal Answer →</button>}
               {hasAnswer&&!hasAnswerImg&&showAnswer&&<div style={{marginTop:"1.5vh",padding:"1.5vh 2vw",background:"#f0faf6",borderRadius:12,border:`1.5px solid ${T.success}33`,width:"100%",flexShrink:0}}>
                 <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:2,color:T.success,marginBottom:4}}>Answer</div>
-                <AutoFitText html={box.answer} baseSizePx={60} minSizePx={12} style={{maxHeight:"15vh"}}/>
+                <AutoFitText html={box.answer} baseSizePx={60} minSizePx={12} fontFamily={aStyleInline.fontFamily} fontWeight={aStyleInline.fontWeight} textAlign={aStyleInline.textAlign} style={{maxHeight:"15vh"}}/>
               </div>}
             </div>
           </div>
@@ -1290,18 +1552,18 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
         <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:24,padding:"4vh 3vw",maxWidth:1100,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",borderTop:`6px solid ${cat.color}`,marginTop:"auto",marginBottom:"2vh"}}>
           <div style={{fontWeight:800,fontSize:"clamp(1rem,2.8vh,1.6rem)",textTransform:"uppercase",letterSpacing:4,marginBottom:".5vh",color:cat.color,fontFamily:T.font}}>{cat.name}</div>
           <div style={{fontWeight:500,fontSize:"clamp(.9rem,2.2vh,1.3rem)",color:T.textSoft,marginBottom:"3vh"}}>{box.subtitle}</div>
-          <div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:700,letterSpacing:-.5,fontFamily:T.font}} dangerouslySetInnerHTML={{__html:box.question}}/>
+          <div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:qStyle.fontWeight,letterSpacing:qStyle.fontWeight<500?0:-.3,fontFamily:qStyle.fontFamily,textAlign:qStyle.textAlign}} dangerouslySetInnerHTML={{__html:box.question}}/>
           <MediaPreview imageUrl={box.imageUrl} videoUrl={box.videoUrl} maxHeight="35vh" onImageClick={setLightboxSrc}/>
           {(timerSeconds||0)>0&&<Timer seconds={timerSeconds}/>}
           {hasAnswer&&!hasAnswerImg&&!showAnswer&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer</button>}
           {hasAnswer&&hasAnswerImg&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer →</button>}
           {hasAnswer&&!hasAnswerImg&&showAnswer&&<div style={{marginTop:"3vh",padding:"3vh 3vw",background:"#f0faf6",borderRadius:16,border:`1.5px solid ${T.success}33`}}>
             <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:2,color:T.success,marginBottom:8}}>Answer</div>
-            <div style={{fontSize:"clamp(1.2rem,4vh,2.6rem)",lineHeight:1.3,color:T.text,fontWeight:700,fontFamily:T.font}} dangerouslySetInnerHTML={{__html:box.answer}}/>
+            <div style={{fontSize:"clamp(1.2rem,4vh,2.6rem)",lineHeight:1.3,color:T.text,fontWeight:aStyleInline.fontWeight,fontFamily:aStyleInline.fontFamily,textAlign:aStyleInline.textAlign}} dangerouslySetInnerHTML={{__html:box.answer}}/>
           </div>}
         </div>
         <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><Btn onClick={goBack} style={{fontSize:15,padding:"12px 32px"}}>← Back to Board</Btn></div>
-        <p style={{color:T.textMuted,fontSize:12,marginTop:8,flexShrink:0}}>Esc = back · Space = reveal · Right-click cells to un-gray · Click images to enlarge</p>
+        <p style={{color:T.textMuted,fontSize:12,marginTop:8,flexShrink:0}}>Esc = back · Space = reveal · Arrow keys to navigate · Right-click cells to un-gray · Click images to enlarge</p>
       </div>
     </>);
   }
@@ -1323,29 +1585,35 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
       {showSB&&<div style={{flexShrink:0,marginBottom:"0.4vh",position:"relative",zIndex:1}}><Scoreboard scores={scores} setScores={setScores} pointStep={pointStep}/></div>}
       <div style={{flex:1,position:"relative",minHeight:0,zIndex:1}}>
         <div style={{position:"absolute",inset:0,display:"grid",gridTemplateColumns:`repeat(${columns},1fr)`,gridTemplateRows:`repeat(${rows},1fr)`,gap:`${Math.min(.6,3/rows)}vh ${Math.min(.4,2/columns)}vw`}}>
-          {order.slice(0,total).map(origIdx=>{
+          {order.slice(0,total).map((origIdx,pos)=>{
             const box=origIdx<boxes.length?boxes[origIdx]:null;const isV=visited[origIdx];
-            if(!box)return<div key={origIdx} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,opacity:.06}}/>;
+            const isHL=pos===highlightPos;
+            if(!box)return<div key={pos} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,opacity:.06}}/>;
             const cat=categories[box.catIdx]||{name:"?",color:"#999"};
             const cellBg=cellBgCss(box,theme,T.surface);
             const borderColor=box.borderOverride||cat.color;
             const outerBorder=box.borderOverride||theme.cellBorder||T.border;
             const cellOpacity=box.cellOpacity!=null?box.cellOpacity:(theme.cellOpacity??1);
             const hasGrad=(box.bgOverrideType==="gradient"||(!box.bgOverride&&theme.cellType==="gradient"));
-            return(<div key={origIdx} onClick={()=>!isV&&openQuestion(origIdx)}
+            return(<div key={pos} onClick={()=>!isV&&openQuestion(origIdx)}
+              onMouseEnter={()=>!isV&&setHighlightPos(pos)}
+              onMouseLeave={()=>setHighlightPos(prev=>prev===pos?null:prev)}
               onContextMenu={e=>{e.preventDefault();if(isV)unvisit(origIdx)}}
               style={{
                 background:isV?"#e5e4e0":cellBg,
-                border:`1px solid ${outerBorder}`,
+                border:isHL&&!isV?`2px solid ${borderColor}`:`1px solid ${outerBorder}`,
                 borderRadius:10,
                 borderLeft:`4px solid ${borderColor}`,
                 display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
                 gap:"0.3vh",
-                transition:"transform .12s,box-shadow .12s,opacity .2s",
+                transition:"transform .15s,box-shadow .15s,opacity .2s,border-color .15s",
                 userSelect:"none",overflow:"hidden",
                 opacity:isV?0.2:cellOpacity,
                 cursor:isV?"context-menu":"pointer",
-                boxShadow:(!isV&&theme.cellShadow)?"0 4px 12px rgba(0,0,0,.2)":"none",
+                transform:isHL&&!isV?"scale(1.06)":"scale(1)",
+                zIndex:isHL&&!isV?5:1,
+                boxShadow:isHL&&!isV?`0 12px 32px ${borderColor}55, 0 0 0 3px ${borderColor}22`:((!isV&&theme.cellShadow)?"0 4px 12px rgba(0,0,0,.2)":"none"),
+                position:"relative",
               }}>
               <span style={{fontWeight:800,fontSize:`clamp(.55rem,${cfv}vh,1.8rem)`,lineHeight:1.1,letterSpacing:-.3,color:isV?"#999":cat.color,textShadow:(!isV&&hasGrad)?"0 1px 2px rgba(255,255,255,.4)":"none",...(isV?strike:{})}}>{cat.name}</span>
               <span style={{fontWeight:500,fontSize:`clamp(.4rem,${sfv}vh,1.1rem)`,lineHeight:1.1,color:isV?"#bbb":T.textSoft,...(isV?strike:{})}}>{box.subtitle}</span>
@@ -1464,7 +1732,7 @@ export default function App(){
   const[loading,setLoading]=useState(true);
   const[guestMode,setGuestMode]=useState(false); // true if viewing a public game without login
 
-  useEffect(()=>{injectFont()},[]);
+  useEffect(()=>{injectFont(FONTS.map(f=>f.id))},[]); // Load all fonts so previews work
 
   // Check URL for public game link on initial load
   useEffect(()=>{
