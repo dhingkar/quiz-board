@@ -54,7 +54,8 @@ function injectFont(fontIds = ["outfit"]) {
 
 // Resolve effective font/weight/alignment given per-cell override + theme + defaults
 function resolveTextStyle(box, theme, kind /* "question"|"answer" */) {
-  const ov = (box && box.textStyle && box.textStyle[kind]) || {};
+  const mode = (theme && theme.typographyMode) || "game";
+  const ov = mode === "override" ? ((box && box.textStyle && box.textStyle[kind]) || {}) : {};
   const t = (theme && theme.textStyle && theme.textStyle[kind]) || {};
   const fontId = ov.font || t.font || "outfit";
   const f = FONT_BY_ID[fontId] || FONT_BY_ID.outfit;
@@ -161,6 +162,7 @@ const DG={name:"Untitled Game",columns:5,rows:5,timerSeconds:0,
       question:{font:"outfit",weight:700,align:"center"},
       answer:{font:"outfit",weight:700,align:"center"},
     },
+    typographyMode:"game", // "game" = use game-wide settings; "override" = allow per-question
   }};
 
 /* ═══ RICH TEXT ═══
@@ -535,7 +537,8 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 .gwrap{flex:1;position:relative;min-height:0}
 .grid{position:absolute;inset:0;display:grid}
 .cell{background:#fff;border:1px solid #e6e4df;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3vh;cursor:pointer;transition:transform .15s,box-shadow .15s,opacity .2s,border-color .15s;user-select:none;overflow:hidden;position:relative}
-.cell:hover:not(.v),.cell.hl:not(.v){transform:scale(1.06);box-shadow:0 12px 32px rgba(0,0,0,.18);z-index:5}
+.cell:hover:not(.v):not(.hl){transform:scale(1.02);box-shadow:0 4px 14px rgba(0,0,0,.08)}
+.cell.hl:not(.v){transform:scale(1.06);z-index:5}
 .cell.v{opacity:.2;background:#e5e4e0;cursor:default}.cell.v span{text-decoration:line-through;text-decoration-color:#c43040;text-decoration-thickness:2.5px}
 .pill{font-family:inherit;font-weight:600;font-size:12px;cursor:pointer;border-radius:50px;transition:all .15s;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1.5px solid #e6e4df;background:#fff;color:#1c1917;padding:6px 12px;line-height:1}
 .qpage{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;padding:1.5vh 1.5vw;background:#f4f3f0;overflow:hidden}
@@ -595,7 +598,8 @@ const cats=G.categories,boxes=G.boxes,COLS=G.columns,ROWS=G.rows,TIMER=G.timerSe
 const THEME=G.theme||{};
 const FONT_MAP=${fontMapJs};
 function resolveStyle(box,kind){
-  const ov=(box&&box.textStyle&&box.textStyle[kind])||{};
+  const mode=THEME.typographyMode||"game";
+  const ov=mode==="override"?((box&&box.textStyle&&box.textStyle[kind])||{}):{};
   const t=(THEME.textStyle&&THEME.textStyle[kind])||{};
   const fontId=ov.font||t.font||"outfit";
   return{
@@ -739,8 +743,9 @@ document.addEventListener("keydown",e=>{
       const total=COLS*ROWS;
       const prevRow=Math.floor(highlightPos/COLS);
       const nextRow=Math.floor(next/COLS);
-      if(next<0||next>=total)highlightPos=null;
-      else if((e.key==="ArrowRight"||e.key==="ArrowLeft")&&nextRow!==prevRow)highlightPos=null;
+      // Clamp at edges; only Escape clears
+      if(next<0||next>=total){}
+      else if((e.key==="ArrowRight"||e.key==="ArrowLeft")&&nextRow!==prevRow){}
       else highlightPos=next;
     }
     buildGrid();
@@ -998,7 +1003,18 @@ function ThemePanel({theme,updateTheme}){
 
       {/* TYPOGRAPHY */}
       <div style={{display:"flex",flexDirection:"column",gap:14,gridColumn:"1 / -1"}}>
-        <span style={lbl}>Typography (game default)</span>
+        <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+          <span style={lbl}>Typography</span>
+          <div style={{display:"flex",gap:4}}>
+            <button onClick={()=>updateTheme("typographyMode","game")} style={tabBtn((theme.typographyMode||"game")==="game")}>Game-wide</button>
+            <button onClick={()=>updateTheme("typographyMode","override")} style={tabBtn(theme.typographyMode==="override")}>Allow per-question overrides</button>
+          </div>
+          <span style={{fontSize:11,color:T.textMuted}}>
+            {(theme.typographyMode||"game")==="game"
+              ? "All questions use the settings below"
+              : "Each question can override these defaults"}
+          </span>
+        </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:16}}>
           {["question","answer"].map(kind=>{
             const ts=(theme.textStyle&&theme.textStyle[kind])||{font:"outfit",weight:700,align:"center"};
@@ -1318,48 +1334,61 @@ function Editor({game,onSave,onPlay,onBack}){
 
         {/* Per-cell typography overrides */}
         <div style={{marginTop:6,paddingTop:10,borderTop:`1px solid ${T.borderLight}`}}>
-          <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Typography (override)</span>
-          {["question","answer"].map(kind=>{
-            const ts=(editBox.textStyle&&editBox.textStyle[kind])||{};
-            const themeTS=(theme.textStyle&&theme.textStyle[kind])||{font:"outfit",weight:700,align:"center"};
-            const hasOverride=ts.font!=null||ts.weight!=null||ts.align!=null;
-            const updTS=(field,value)=>{
-              const next={...(editBox.textStyle||{})};
-              next[kind]={...(next[kind]||{}),[field]:value};
-              updateCell(editIdx,"textStyle",next);
-            };
-            const clearAll=()=>{
-              const next={...(editBox.textStyle||{})};
-              delete next[kind];
-              updateCell(editIdx,"textStyle",next);
-            };
-            const fontDef=FONT_BY_ID[ts.font||themeTS.font]||FONT_BY_ID.outfit;
-            return(<div key={kind} style={{marginTop:8}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-                <span style={{fontSize:11,fontWeight:600,color:kind==="question"?T.textSoft:T.success,textTransform:"uppercase",letterSpacing:1}}>{kind}</span>
-                {hasOverride&&<button onClick={clearAll} style={{background:"none",border:"none",fontSize:10,color:T.danger,cursor:"pointer",fontFamily:T.font,fontWeight:600}}>Use default</button>}
+          {(()=>{
+            const overrideMode=theme.typographyMode==="override";
+            return(<>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                <span style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1}}>Typography (override)</span>
+                {!overrideMode&&<span style={{fontSize:10,color:T.textMuted,fontStyle:"italic"}}>game-wide mode</span>}
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                <span style={{fontSize:11,color:T.textSoft,width:44}}>Font</span>
-                <select value={ts.font||themeTS.font||"outfit"} onChange={e=>updTS("font",e.target.value)} style={{flex:1,padding:"5px 8px",border:`1.5px solid ${ts.font?T.text:T.borderLight}`,borderRadius:6,fontSize:11,fontFamily:T.font,background:T.surface,cursor:"pointer"}}>
-                  {FONTS.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}
-                </select>
+              {!overrideMode&&<p style={{fontSize:11,color:T.textMuted,margin:"4px 0 0",lineHeight:1.4}}>
+                Per-question overrides are disabled. To enable, open <b>🎨 Theme</b> → Typography → switch to <b>Allow per-question overrides</b>.
+              </p>}
+              <div style={{opacity:overrideMode?1:0.4,pointerEvents:overrideMode?"auto":"none"}}>
+                {["question","answer"].map(kind=>{
+                  const ts=(editBox.textStyle&&editBox.textStyle[kind])||{};
+                  const themeTS=(theme.textStyle&&theme.textStyle[kind])||{font:"outfit",weight:700,align:"center"};
+                  const hasOverride=ts.font!=null||ts.weight!=null||ts.align!=null;
+                  const updTS=(field,value)=>{
+                    const next={...(editBox.textStyle||{})};
+                    next[kind]={...(next[kind]||{}),[field]:value};
+                    updateCell(editIdx,"textStyle",next);
+                  };
+                  const clearAll=()=>{
+                    const next={...(editBox.textStyle||{})};
+                    delete next[kind];
+                    updateCell(editIdx,"textStyle",next);
+                  };
+                  const fontDef=FONT_BY_ID[ts.font||themeTS.font]||FONT_BY_ID.outfit;
+                  return(<div key={kind} style={{marginTop:8}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+                      <span style={{fontSize:11,fontWeight:600,color:kind==="question"?T.textSoft:T.success,textTransform:"uppercase",letterSpacing:1}}>{kind}</span>
+                      {hasOverride&&overrideMode&&<button onClick={clearAll} style={{background:"none",border:"none",fontSize:10,color:T.danger,cursor:"pointer",fontFamily:T.font,fontWeight:600}}>Use default</button>}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                      <span style={{fontSize:11,color:T.textSoft,width:44}}>Font</span>
+                      <select value={ts.font||themeTS.font||"outfit"} onChange={e=>updTS("font",e.target.value)} disabled={!overrideMode} style={{flex:1,padding:"5px 8px",border:`1.5px solid ${ts.font?T.text:T.borderLight}`,borderRadius:6,fontSize:11,fontFamily:T.font,background:T.surface,cursor:overrideMode?"pointer":"not-allowed"}}>
+                        {FONTS.map(f=><option key={f.id} value={f.id}>{f.name}</option>)}
+                      </select>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                      <span style={{fontSize:11,color:T.textSoft,width:44}}>Weight</span>
+                      <select value={ts.weight||themeTS.weight||700} onChange={e=>updTS("weight",parseInt(e.target.value))} disabled={!overrideMode} style={{flex:1,padding:"5px 8px",border:`1.5px solid ${ts.weight?T.text:T.borderLight}`,borderRadius:6,fontSize:11,fontFamily:T.font,background:T.surface,cursor:overrideMode?"pointer":"not-allowed"}}>
+                        {fontDef.weights.map(w=><option key={w} value={w}>{w} — {WEIGHT_LABEL[w]||""}</option>)}
+                      </select>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:11,color:T.textSoft,width:44}}>Align</span>
+                      <div style={{display:"flex",gap:3}}>
+                        {["left","center","right"].map(a=><button key={a} onClick={()=>updTS("align",a)} disabled={!overrideMode}
+                          style={{padding:"4px 8px",borderRadius:5,fontSize:10,fontWeight:600,cursor:overrideMode?"pointer":"not-allowed",border:`1.5px solid ${ts.align===a?T.text:T.borderLight}`,background:ts.align===a?T.text:"transparent",color:ts.align===a?"#fff":T.textSoft,fontFamily:T.font}}>{a.charAt(0).toUpperCase()+a.slice(1)}</button>)}
+                      </div>
+                    </div>
+                  </div>);
+                })}
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                <span style={{fontSize:11,color:T.textSoft,width:44}}>Weight</span>
-                <select value={ts.weight||themeTS.weight||700} onChange={e=>updTS("weight",parseInt(e.target.value))} style={{flex:1,padding:"5px 8px",border:`1.5px solid ${ts.weight?T.text:T.borderLight}`,borderRadius:6,fontSize:11,fontFamily:T.font,background:T.surface,cursor:"pointer"}}>
-                  {fontDef.weights.map(w=><option key={w} value={w}>{w} — {WEIGHT_LABEL[w]||""}</option>)}
-                </select>
-              </div>
-              <div style={{display:"flex",alignItems:"center",gap:6}}>
-                <span style={{fontSize:11,color:T.textSoft,width:44}}>Align</span>
-                <div style={{display:"flex",gap:3}}>
-                  {["left","center","right"].map(a=><button key={a} onClick={()=>updTS("align",a)}
-                    style={{padding:"4px 8px",borderRadius:5,fontSize:10,fontWeight:600,cursor:"pointer",border:`1.5px solid ${ts.align===a?T.text:T.borderLight}`,background:ts.align===a?T.text:"transparent",color:ts.align===a?"#fff":T.textSoft,fontFamily:T.font}}>{a.charAt(0).toUpperCase()+a.slice(1)}</button>)}
-                </div>
-              </div>
-            </div>);
-          })}
+            </>);
+          })()}
         </div>
 
         {/* Navigation */}
@@ -1449,11 +1478,10 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           else if(e.key==="ArrowLeft")next=prev-1;
           else if(e.key==="ArrowDown")next=prev+columns;
           else if(e.key==="ArrowUp")next=prev-columns;
-          // Check bounds
-          if(next<0||next>=total)return null; // out of bounds → clear
-          // Check row wrap on left/right
-          if(e.key==="ArrowRight"&&Math.floor(next/columns)!==Math.floor(prev/columns))return null;
-          if(e.key==="ArrowLeft"&&Math.floor(next/columns)!==Math.floor(prev/columns))return null;
+          // Clamp at grid edges — only Escape clears
+          if(next<0||next>=total)return prev;
+          // No row-wrap on left/right
+          if((e.key==="ArrowRight"||e.key==="ArrowLeft")&&Math.floor(next/columns)!==Math.floor(prev/columns))return prev;
           return next;
         });
         return;
@@ -1596,8 +1624,6 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
             const cellOpacity=box.cellOpacity!=null?box.cellOpacity:(theme.cellOpacity??1);
             const hasGrad=(box.bgOverrideType==="gradient"||(!box.bgOverride&&theme.cellType==="gradient"));
             return(<div key={pos} onClick={()=>!isV&&openQuestion(origIdx)}
-              onMouseEnter={()=>!isV&&setHighlightPos(pos)}
-              onMouseLeave={()=>setHighlightPos(prev=>prev===pos?null:prev)}
               onContextMenu={e=>{e.preventDefault();if(isV)unvisit(origIdx)}}
               style={{
                 background:isV?"#e5e4e0":cellBg,
