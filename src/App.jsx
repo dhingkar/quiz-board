@@ -312,6 +312,54 @@ function ImageUpload({value,onChange,label,color,borderColor}){
   );
 }
 
+function VideoUpload({value,onChange,label,color,borderColor}){
+  const fileRef=useRef(null);
+  const[uploading,setUploading]=useState(false);
+
+  const handleFile=async(e)=>{
+    const file=e.target.files?.[0];
+    if(!file)return;
+    e.target.value="";
+    const sizeMB=file.size/(1024*1024);
+    if(sizeMB>100){
+      if(!window.confirm(`This video is ${sizeMB.toFixed(1)}MB. Larger videos will make your HTML export quite large. Continue?`))return;
+    }
+    setUploading(true);
+    try{
+      const user=auth.currentUser;
+      if(!user){alert("You must be logged in to upload.");setUploading(false);return}
+      const fileRef2=ref(storage,`users/${user.uid}/videos/${Date.now()}-${file.name}`);
+      await uploadBytes(fileRef2,file);
+      const url=await getDownloadURL(fileRef2);
+      onChange(url);
+    }catch(err){alert("Failed to upload video: "+err.message)}
+    setUploading(false);
+  };
+
+  return(
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+        <span style={{fontSize:10,fontWeight:700,color:color||"#6c4dcf",textTransform:"uppercase",letterSpacing:1}}>{label||"🎬 Local Video"}</span>
+        <div style={{flex:1}}/>
+        {uploading&&<span style={{fontSize:10,color:"#6c4dcf",fontWeight:600}}>Uploading…</span>}
+        {value&&!uploading&&<button onClick={()=>onChange("")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font,fontWeight:600}}>Remove</button>}
+      </div>
+      <div style={{display:"flex",gap:6}}>
+        <input value={value||""} onChange={e=>onChange(e.target.value)}
+          placeholder="Paste URL or upload .mp4 →" style={{flex:1,padding:"8px 12px",border:`1.5px solid ${borderColor||T.borderLight}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:T.font,color:T.text,background:T.surfaceAlt}}/>
+        <input ref={fileRef} type="file" accept="video/mp4,video/webm,video/quicktime,video/*" style={{display:"none"}} onChange={handleFile}/>
+        <button onClick={()=>fileRef.current?.click()} disabled={uploading} style={{padding:"6px 12px",border:`1.5px solid ${borderColor||T.borderLight}`,borderRadius:8,fontSize:12,fontWeight:600,cursor:uploading?"wait":"pointer",background:T.surface,color:T.textSoft,fontFamily:T.font,whiteSpace:"nowrap",flexShrink:0}}>{uploading?"…":"Upload"}</button>
+      </div>
+      {value&&!uploading&&<div style={{marginTop:6}}>
+        <video src={value} controls preload="metadata" style={{maxWidth:"100%",maxHeight:120,borderRadius:8,border:`1px solid ${T.borderLight}`,display:"block"}} onError={e=>{e.target.style.display="none"}}/>
+      </div>}
+      <p style={{fontSize:10,color:T.textMuted,margin:"4px 0 0",lineHeight:1.4}}>
+        On play mode you'll see a "▶ Play Video" button. The HTML export embeds this video as base64 so it plays offline.
+      </p>
+    </div>
+  );
+}
+
 /* ═══ BTN ═══ */
 function Btn({children,onClick,variant="default",style={},...props}){
   const base={fontFamily:T.font,fontWeight:600,fontSize:14,cursor:"pointer",borderRadius:50,transition:"all 0.15s",display:"inline-flex",alignItems:"center",gap:6,whiteSpace:"nowrap",border:"none",padding:"10px 22px",lineHeight:1};
@@ -450,45 +498,58 @@ async function fetchImageAsDataUrl(url){
 
 async function exportGameHTML(game){
   const allImageUrls=[];
+  const allVideoUrls=[];
   game.boxes.forEach(b=>{
     if(b.imageUrl)allImageUrls.push(b.imageUrl);
     if(b.answerImageUrl)allImageUrls.push(b.answerImageUrl);
+    if(b.localVideoUrl)allVideoUrls.push(b.localVideoUrl);
   });
   if(game.theme?.bgImageUrl)allImageUrls.push(game.theme.bgImageUrl);
 
-  const uniqueUrls=[...new Set(allImageUrls)];
-  const total=uniqueUrls.length;
-  let done=0;
+  const uniqueImages=[...new Set(allImageUrls)];
+  const uniqueVideos=[...new Set(allVideoUrls)];
+  const totalImg=uniqueImages.length;
+  const totalVid=uniqueVideos.length;
   const showProgress=(msg)=>{
     let el=document.getElementById("__exportProgress");
     if(!el){
       el=document.createElement("div");
       el.id="__exportProgress";
-      el.style.cssText="position:fixed;top:20px;right:20px;background:#1c1917;color:#fff;padding:14px 20px;border-radius:10px;font-family:'Outfit',sans-serif;font-size:14px;font-weight:600;z-index:99999;box-shadow:0 8px 30px rgba(0,0,0,.3)";
+      el.style.cssText="position:fixed;top:20px;right:20px;background:#1c1917;color:#fff;padding:14px 20px;border-radius:10px;font-family:'Outfit',sans-serif;font-size:14px;font-weight:600;z-index:99999;box-shadow:0 8px 30px rgba(0,0,0,.3);max-width:320px";
       document.body.appendChild(el);
     }
     el.textContent=msg;
   };
   const hideProgress=()=>{const el=document.getElementById("__exportProgress");if(el)el.remove()};
 
-  if(total>0)showProgress(`Embedding images for offline use… 0/${total}`);
+  if(totalImg+totalVid>0)showProgress(`Embedding for offline use… 0/${totalImg+totalVid}`);
 
-  // Build a URL→{ok,data} map
   const urlMap={};
   const failed=[];
-  for(const url of uniqueUrls){
+  let done=0;
+  for(const url of uniqueImages){
     const result=await fetchImageAsDataUrl(url);
     urlMap[url]=result;
     if(!result.ok)failed.push(url);
     done++;
-    showProgress(`Embedding images for offline use… ${done}/${total}`);
+    showProgress(`Embedding images… ${done}/${totalImg}${totalVid>0?` (then ${totalVid} videos)`:""}`);
+  }
+  // Videos can be large — fetchImageAsDataUrl's Method 1 (direct fetch) works for any binary
+  let vDone=0;
+  for(const url of uniqueVideos){
+    showProgress(`Embedding video ${vDone+1}/${totalVid}… (may take a while)`);
+    const result=await fetchImageAsDataUrl(url);
+    urlMap[url]=result;
+    if(!result.ok)failed.push(url);
+    vDone++;
   }
 
-  // Clone game with embedded images
+  // Clone game with embedded media
   const embeddedGame=JSON.parse(JSON.stringify(game));
   embeddedGame.boxes.forEach(b=>{
     if(b.imageUrl&&urlMap[b.imageUrl])b.imageUrl=urlMap[b.imageUrl].data;
     if(b.answerImageUrl&&urlMap[b.answerImageUrl])b.answerImageUrl=urlMap[b.answerImageUrl].data;
+    if(b.localVideoUrl&&urlMap[b.localVideoUrl])b.localVideoUrl=urlMap[b.localVideoUrl].data;
   });
   if(embeddedGame.theme?.bgImageUrl&&urlMap[embeddedGame.theme.bgImageUrl]){
     embeddedGame.theme.bgImageUrl=urlMap[embeddedGame.theme.bgImageUrl].data;
@@ -497,7 +558,7 @@ async function exportGameHTML(game){
   hideProgress();
 
   if(failed.length>0){
-    const msg=`⚠️ ${failed.length} of ${total} image(s) could not be embedded and will still use URLs (requires internet to load).\n\nThis is usually caused by Firebase Storage CORS. Go to Firebase Console → Storage → Rules tab → check that "read" is public, OR run:\n\ngsutil cors set cors.json gs://quiz-board-claude.firebasestorage.app\n\n(where cors.json allows GET from all origins)\n\nExport the HTML anyway?`;
+    const msg=`⚠️ ${failed.length} of ${totalImg+totalVid} media file(s) could not be embedded and will still use URLs (requires internet to load).\n\nThis is usually caused by Firebase Storage CORS. Go to Firebase Console → Storage → Rules tab → check that "read" is public, OR run:\n\ngsutil cors set cors.json gs://quiz-board-claude.firebasestorage.app\n\n(where cors.json allows GET from all origins)\n\nExport the HTML anyway?`;
     if(!window.confirm(msg))return;
   }
 
@@ -536,9 +597,8 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 .topbar h1{font-size:2.4vh;font-weight:800;letter-spacing:-.5px;color:#1c1917}
 .gwrap{flex:1;position:relative;min-height:0}
 .grid{position:absolute;inset:0;display:grid}
-.cell{background:#fff;border:1px solid #e6e4df;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3vh;cursor:pointer;transition:transform .15s,box-shadow .15s,opacity .2s,border-color .15s;user-select:none;overflow:hidden;position:relative}
-.cell:hover:not(.v):not(.hl){transform:scale(1.02);box-shadow:0 4px 14px rgba(0,0,0,.08)}
-.cell.hl:not(.v){transform:scale(1.06);z-index:5}
+.cell{background:#fff;border:1px solid #e6e4df;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3vh;cursor:pointer;transition:transform 180ms cubic-bezier(.2,.7,.2,1),box-shadow 180ms cubic-bezier(.2,.7,.2,1),opacity 180ms;user-select:none;overflow:hidden;position:relative;will-change:transform}
+.cell:hover:not(.v){transform:translateY(-3px) scale(1.03);box-shadow:var(--hover-shadow,0 10px 28px rgba(0,0,0,.18));z-index:5}
 .cell.v{opacity:.2;background:#e5e4e0;cursor:default}.cell.v span{text-decoration:line-through;text-decoration-color:#c43040;text-decoration-thickness:2.5px}
 .pill{font-family:inherit;font-weight:600;font-size:12px;cursor:pointer;border-radius:50px;transition:all .15s;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1.5px solid #e6e4df;background:#fff;color:#1c1917;padding:6px 12px;line-height:1}
 .qpage{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;padding:1.5vh 1.5vw;background:#f4f3f0;overflow:hidden}
@@ -571,6 +631,8 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 <div id="qSub" style="font-weight:500;font-size:clamp(.7rem,1.8vh,1rem);color:#78716c;margin-bottom:1.5vh;flex-shrink:0"></div>
 <div class="fittext" id="qFit" style="max-height:40vh"><div class="fittext-inner" id="qText"></div></div>
 <div id="qMedia" class="media hidden"></div>
+<button id="playVideoBtn" class="reveal-btn hidden" style="background:#6c4dcf14;color:#6c4dcf;border:2px solid #6c4dcf44" onclick="playLocalVideo()">▶ Play Video</button>
+<div id="localVideoBox" class="hidden" style="margin-top:1.5vh;flex-shrink:0;width:100%;display:flex;justify-content:center"></div>
 <div id="qTimer" class="timer-bar hidden"><div class="timer-track"><div class="timer-fill" id="timerFill"></div></div><span id="timerText" style="font-family:monospace;font-weight:700;font-size:clamp(1rem,2.5vh,1.6rem);min-width:50px;text-align:right"></span></div>
 <button id="revealBtn" class="reveal-btn hidden" onclick="revealAnswer()">Reveal Answer</button>
 <div id="answerBox" class="answer-box hidden"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#04a87e;margin-bottom:4px">Answer</div><div class="fittext" id="aFit" style="max-height:15vh"><div class="fittext-inner" id="aText"></div></div></div>
@@ -615,7 +677,7 @@ function applyStyle(el,box,kind){
   el.style.textAlign=s.textAlign;
   el.style.letterSpacing=s.fontWeight<500?"0":"-0.3px";
 }
-let order=boxes.map((_,i)=>i),visited={},curIdx=null,onAnswerPage=false,highlightPos=null;
+let order=boxes.map((_,i)=>i),visited={},curIdx=null,onAnswerPage=false;
 const grid=document.getElementById("grid");
 grid.style.gridTemplateColumns="repeat("+COLS+",1fr)";
 grid.style.gridTemplateRows="repeat("+ROWS+",1fr)";
@@ -652,7 +714,7 @@ function fitText(outerId,innerId,maxPx,minPx){
   inner.style.fontSize=best+"px";
 }
 function buildGrid(){grid.innerHTML="";order.slice(0,COLS*ROWS).forEach((idx,pos)=>{
-const box=idx<boxes.length?boxes[idx]:null;const d=document.createElement("div");d.className="cell"+(visited[idx]?" v":"")+((pos===highlightPos&&!visited[idx])?" hl":"");
+const box=idx<boxes.length?boxes[idx]:null;const d=document.createElement("div");d.className="cell"+(visited[idx]?" v":"");
 if(!box){d.style.opacity="0.06";grid.appendChild(d);return}
 const cat=cats[box.catIdx]||{name:"?",color:"#999"};
 const cellBg=cellBgCss(box);
@@ -661,10 +723,10 @@ const outerBorder=box.borderOverride||THEME.cellBorder||"#e6e4df";
 const cellOpacity=box.cellOpacity!=null?box.cellOpacity:(THEME.cellOpacity!=null?THEME.cellOpacity:1);
 if(!visited[idx]){
   d.style.background=cellBg;
-  d.style.border=(pos===highlightPos?"2px":"1px")+" solid "+(pos===highlightPos?borderColor:outerBorder);
+  d.style.border="1px solid "+outerBorder;
   d.style.opacity=cellOpacity;
-  if(pos===highlightPos)d.style.boxShadow="0 12px 32px "+borderColor+"55, 0 0 0 3px "+borderColor+"22";
-  else if(THEME.cellShadow)d.style.boxShadow="0 4px 12px rgba(0,0,0,.2)";
+  if(THEME.cellShadow)d.style.boxShadow="0 4px 12px rgba(0,0,0,.15)";
+  d.style.setProperty("--hover-shadow","0 10px 28px "+borderColor+"44");
 }
 d.style.borderLeft="4px solid "+borderColor;
 const c=document.createElement("span");c.style.cssText="font-weight:800;font-size:clamp(0.55rem,"+cfv+"vh,1.8rem);line-height:1.1;letter-spacing:-0.3px;color:"+(visited[idx]?"#999":cat.color);c.textContent=cat.name;
@@ -673,7 +735,7 @@ d.appendChild(c);d.appendChild(s);
 if(!visited[idx])d.addEventListener("click",()=>showQ(idx));
 d.addEventListener("contextmenu",e=>{e.preventDefault();if(visited[idx]){delete visited[idx];buildGrid()}});
 grid.appendChild(d)})}
-function showQ(idx){visited[idx]=true;curIdx=idx;onAnswerPage=false;highlightPos=null;const box=boxes[idx],cat=cats[box.catIdx]||{name:"?",color:"#999"};
+function showQ(idx){visited[idx]=true;curIdx=idx;onAnswerPage=false;const box=boxes[idx],cat=cats[box.catIdx]||{name:"?",color:"#999"};
 document.getElementById("qCat").textContent=cat.name;document.getElementById("qCat").style.color=cat.color;
 document.getElementById("qSub").textContent=box.subtitle;
 const qTextEl=document.getElementById("qText");qTextEl.innerHTML=box.question||"";applyStyle(qTextEl,box,"question");
@@ -681,6 +743,10 @@ document.getElementById("qCard").style.borderTop="5px solid "+cat.color;
 const media=document.getElementById("qMedia");media.innerHTML="";media.classList.add("hidden");
 if(box.imageUrl){const img=document.createElement("img");img.src=box.imageUrl;img.style.cursor="zoom-in";img.onclick=()=>openLightbox(box.imageUrl);img.onerror=()=>img.style.display="none";media.appendChild(img);media.classList.remove("hidden")}
 const vid=yid(box.videoUrl);if(vid){const w=document.createElement("div");w.className="yt";w.innerHTML='<iframe src="https://www.youtube.com/embed/'+vid+'" allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture" allowfullscreen></iframe>';media.appendChild(w);media.classList.remove("hidden")}
+// Local video: show Play Video button (or hide), reset player
+const pvb=document.getElementById("playVideoBtn"),lvb=document.getElementById("localVideoBox");
+lvb.innerHTML="";lvb.classList.add("hidden");
+if(box.localVideoUrl){pvb.classList.remove("hidden")}else{pvb.classList.add("hidden")}
 const rb=document.getElementById("revealBtn"),ab=document.getElementById("answerBox");
 const hasA=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim());
 const hasAImg=box.answerImageUrl&&box.answerImageUrl.trim();
@@ -691,9 +757,29 @@ document.getElementById("gridPage").classList.add("hidden");document.getElementB
 const tb=document.getElementById("qTimer");if(TIMER>0){tb.classList.remove("hidden");startTimer(TIMER)}else{tb.classList.add("hidden")}
 setTimeout(()=>{fitText("qFit","qText",80,14)},50);
 history.pushState({v:"q"},"")}
+function playLocalVideo(){
+  if(curIdx==null)return;
+  const box=boxes[curIdx];if(!box.localVideoUrl)return;
+  const pvb=document.getElementById("playVideoBtn"),lvb=document.getElementById("localVideoBox");
+  pvb.classList.add("hidden");
+  lvb.innerHTML="";
+  const v=document.createElement("video");
+  v.src=box.localVideoUrl;v.controls=true;v.autoplay=true;
+  v.style.cssText="max-width:100%;max-height:45vh;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1)";
+  lvb.appendChild(v);
+  lvb.classList.remove("hidden");
+}
+function stopLocalVideo(){
+  const lvb=document.getElementById("localVideoBox");
+  if(!lvb)return;
+  const vids=lvb.querySelectorAll("video");
+  vids.forEach(v=>{try{v.pause()}catch(e){}});
+  lvb.innerHTML="";lvb.classList.add("hidden");
+}
 function revealAnswer(){
 const box=boxes[curIdx],cat=cats[box.catIdx]||{name:"?",color:"#999"};
 const hasAImg=box.answerImageUrl&&box.answerImageUrl.trim();
+stopLocalVideo();
 if(hasAImg){document.getElementById("aCat2").textContent=cat.name+" — Answer";
 const aTextEl2=document.getElementById("aText2");aTextEl2.innerHTML=box.answer||"";applyStyle(aTextEl2,box,"answer");
 const c=document.getElementById("aImg2");c.innerHTML="";
@@ -703,7 +789,7 @@ onAnswerPage=true;setTimeout(()=>{fitText("aFit2","aText2",80,14)},50);history.p
 }else{document.getElementById("revealBtn").classList.add("hidden");document.getElementById("answerBox").classList.remove("hidden");
 setTimeout(()=>{fitText("aFit","aText",60,12)},50)}}
 function backToQ(){onAnswerPage=false;document.getElementById("answerPage").classList.add("hidden");document.getElementById("qPage").classList.remove("hidden")}
-function goBack(){clearInterval(timerInterval);curIdx=null;onAnswerPage=false;document.getElementById("qPage").classList.add("hidden");document.getElementById("answerPage").classList.add("hidden");document.getElementById("gridPage").classList.remove("hidden");buildGrid()}
+function goBack(){clearInterval(timerInterval);stopLocalVideo();curIdx=null;onAnswerPage=false;document.getElementById("qPage").classList.add("hidden");document.getElementById("answerPage").classList.add("hidden");document.getElementById("gridPage").classList.remove("hidden");buildGrid()}
 function scramble(){for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[order[i],order[j]]=[order[j],order[i]]}buildGrid()}
 function resetBoard(){visited={};order=boxes.map((_,i)=>i);buildGrid()}
 function toggleFS(){if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen()}
@@ -719,45 +805,15 @@ function closeLightbox(){
 }
 window.addEventListener("popstate",()=>{if(!document.getElementById("lightbox").classList.contains("hidden")){closeLightbox();return}if(onAnswerPage){backToQ()}else if(curIdx!==null){goBack()}});
 document.addEventListener("keydown",e=>{
-  // Lightbox: any key on lightbox first
+  // Lightbox first
   if(!document.getElementById("lightbox").classList.contains("hidden")){
-    if(e.key==="Escape"){closeLightbox();return}
+    if(e.key==="Escape"){closeLightbox()}
     return;
   }
-  // Question/answer pages
+  // Question/answer pages only
   if(curIdx!==null){
     if(e.key==="Escape"){if(onAnswerPage)backToQ();else goBack()}
     if(e.key===" "&&!document.getElementById("revealBtn").classList.contains("hidden")){e.preventDefault();revealAnswer()}
-    return;
-  }
-  // Grid page: keyboard navigation
-  if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)){
-    e.preventDefault();
-    if(highlightPos===null){highlightPos=0}
-    else{
-      let next=highlightPos;
-      if(e.key==="ArrowRight")next++;
-      else if(e.key==="ArrowLeft")next--;
-      else if(e.key==="ArrowDown")next+=COLS;
-      else if(e.key==="ArrowUp")next-=COLS;
-      const total=COLS*ROWS;
-      const prevRow=Math.floor(highlightPos/COLS);
-      const nextRow=Math.floor(next/COLS);
-      // Clamp at edges; only Escape clears
-      if(next<0||next>=total){}
-      else if((e.key==="ArrowRight"||e.key==="ArrowLeft")&&nextRow!==prevRow){}
-      else highlightPos=next;
-    }
-    buildGrid();
-    return;
-  }
-  if(e.key==="Escape"&&highlightPos!==null){highlightPos=null;buildGrid();return}
-  if((e.key==="Enter"||e.key===" ")&&highlightPos!==null){
-    const origIdx=order[highlightPos];
-    if(origIdx!=null&&origIdx<boxes.length&&!visited[origIdx]){
-      e.preventDefault();
-      showQ(origIdx);
-    }
   }
 });
 buildGrid();
@@ -1125,7 +1181,7 @@ function Editor({game,onSave,onPlay,onBack}){
   // Drag state
   const[dragIdx,setDragIdx]=useState(null);
 
-  const cellFilled=b=>b&&(b.question||b.subtitle||b.answer||b.imageUrl||b.videoUrl||b.answerImageUrl);
+  const cellFilled=b=>b&&(b.question||b.subtitle||b.answer||b.imageUrl||b.videoUrl||b.localVideoUrl||b.answerImageUrl);
 
   return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font,display:"flex",flexDirection:"column",position:"relative"}}>
     {/* Background image/color — sits behind ALL editor UI */}
@@ -1229,6 +1285,7 @@ function Editor({game,onSave,onPlay,onBack}){
               <span style={{fontWeight:500,fontSize:11,color:T.textSoft,lineHeight:1.1,textAlign:"center"}}>{box.subtitle||"—"}</span>
               {filled&&<div style={{position:"absolute",top:6,right:6,width:7,height:7,borderRadius:4,background:T.success}}/>}
               {(box.imageUrl||box.answerImageUrl)&&<div style={{position:"absolute",bottom:6,right:6,fontSize:10,color:T.textMuted}}>🖼</div>}
+              {box.localVideoUrl&&<div style={{position:"absolute",bottom:6,left:10,fontSize:10,color:T.textMuted}}>🎬</div>}
               {(box.bgOverride||box.borderOverride||box.cellOpacity!=null)&&<div style={{position:"absolute",top:6,left:10,fontSize:9,color:T.textMuted}}>🎨</div>}
             </div>);
           })}
@@ -1286,6 +1343,8 @@ function Editor({game,onSave,onPlay,onBack}){
           <input value={editBox.videoUrl||""} onChange={e=>updateCell(editIdx,"videoUrl",e.target.value)} placeholder="https://youtube.com/..." style={{...inp,width:"100%",marginTop:2}}/>
           {editBox.videoUrl&&<div style={{marginTop:6}}><MediaPreview videoUrl={editBox.videoUrl} maxHeight="100px"/></div>}
         </div>
+
+        <VideoUpload value={editBox.localVideoUrl||""} onChange={v=>updateCell(editIdx,"localVideoUrl",v)} label="🎬 Local Video (offline-ready)" color="#6c4dcf"/>
 
         <ImageUpload value={editBox.answerImageUrl||""} onChange={v=>updateCell(editIdx,"answerImageUrl",v)} label="🖼 Answer Image" color={T.success} borderColor={T.success+"44"}/>
 
@@ -1416,14 +1475,15 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   const[showAnswer,setShowAnswer]=useState(false);
   const[scores,setScores]=useState([]);
   const[lightboxSrc,setLightboxSrc]=useState(null);
-  const[highlightPos,setHighlightPos]=useState(null); // grid position (0..total-1), not origIdx
+  const[hoveredPos,setHoveredPos]=useState(null);
+  const[showVideo,setShowVideo]=useState(false);
 
   const cfv=Math.min(2.8,15/rows),sfv=Math.min(2,10/rows);
   const total=columns*rows;
   const strike={textDecoration:"line-through",textDecorationColor:"#c43040",textDecorationThickness:"2.5px"};
 
   const unvisit=i=>{setVisited(p=>{const n={...p};delete n[i];return n})};
-  const reset=()=>{setVisited({});setActiveIdx(null);setShowAnswer(false);setOrder(boxes.map((_,i)=>i))};
+  const reset=()=>{setVisited({});setActiveIdx(null);setShowAnswer(false);setShowVideo(false);setOrder(boxes.map((_,i)=>i))};
   const doScramble=useCallback(()=>setOrder(p=>shuffle(p)),[]);
   const toggleFS=()=>{if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen()};
 
@@ -1431,8 +1491,8 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   useEffect(()=>{
     const onPop=()=>{
       if(activeIdx!==null){
-        if(showAnswer){setShowAnswer(false)}
-        else{setActiveIdx(null);setShowAnswer(false)}
+        if(showAnswer){setShowAnswer(false);setShowVideo(false)}
+        else{setActiveIdx(null);setShowAnswer(false);setShowVideo(false)}
       }
     };
     window.addEventListener("popstate",onPop);
@@ -1440,66 +1500,31 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   },[activeIdx,showAnswer]);
 
   const openQuestion=i=>{
-    setVisited(p=>({...p,[i]:true}));setActiveIdx(i);setShowAnswer(false);
+    setVisited(p=>({...p,[i]:true}));setActiveIdx(i);setShowAnswer(false);setShowVideo(false);
     window.history.pushState({view:"question"},"");
   };
   const revealAns=()=>{
-    setShowAnswer(true);
+    setShowAnswer(true);setShowVideo(false);
     window.history.pushState({view:"answer"},"");
   };
   const goBack=()=>{
     if(showAnswer){setShowAnswer(false)}
     else{setActiveIdx(null);setShowAnswer(false)}
+    setShowVideo(false);
   };
 
   useEffect(()=>{
     const h=e=>{
-      // Ignore if typing in an input (so it doesn't interfere with the scoreboard player name input)
       const tag=(e.target?.tagName||"").toLowerCase();
       if(tag==="input"||tag==="textarea"||e.target?.isContentEditable)return;
-
-      // Question/answer view shortcuts
+      // Question/answer view shortcuts only
       if(activeIdx!==null){
         if(e.key==="Escape"){e.preventDefault();goBack()}
         if(e.key===" "&&!showAnswer){e.preventDefault();revealAns()}
-        return;
-      }
-
-      // Grid view: arrow nav + enter/space to open
-      if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)){
-        e.preventDefault();
-        setHighlightPos(prev=>{
-          if(prev===null){
-            // First arrow: enter at top-left
-            return 0;
-          }
-          let next=prev;
-          if(e.key==="ArrowRight")next=prev+1;
-          else if(e.key==="ArrowLeft")next=prev-1;
-          else if(e.key==="ArrowDown")next=prev+columns;
-          else if(e.key==="ArrowUp")next=prev-columns;
-          // Clamp at grid edges — only Escape clears
-          if(next<0||next>=total)return prev;
-          // No row-wrap on left/right
-          if((e.key==="ArrowRight"||e.key==="ArrowLeft")&&Math.floor(next/columns)!==Math.floor(prev/columns))return prev;
-          return next;
-        });
-        return;
-      }
-      if(e.key==="Escape"){
-        if(highlightPos!==null){e.preventDefault();setHighlightPos(null)}
-      }
-      if((e.key==="Enter"||e.key===" ")&&highlightPos!==null){
-        const origIdx=order[highlightPos];
-        if(origIdx!=null&&origIdx<boxes.length&&!visited[origIdx]){
-          e.preventDefault();
-          openQuestion(origIdx);
-          setHighlightPos(null);
-        }
       }
     };
     window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);
-  },[activeIdx,showAnswer,highlightPos,columns,total,order,visited,boxes.length]);
+  },[activeIdx,showAnswer]);
 
   // ─── ANSWER PAGE (separate full page when answer has image) ───
   if(activeIdx!==null&&activeIdx<boxes.length&&showAnswer){
@@ -1555,10 +1580,12 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
               <div style={{fontWeight:800,fontSize:"clamp(.8rem,2.2vh,1.3rem)",textTransform:"uppercase",letterSpacing:3,marginBottom:".3vh",color:cat.color,fontFamily:T.font,flexShrink:0}}>{cat.name}</div>
               <div style={{fontWeight:500,fontSize:"clamp(.7rem,1.8vh,1rem)",color:T.textSoft,marginBottom:"1.5vh",flexShrink:0}}>{box.subtitle}</div>
               <AutoFitText html={box.question} baseSizePx={80} minSizePx={14} fontFamily={qStyle.fontFamily} fontWeight={qStyle.fontWeight} textAlign={qStyle.textAlign} style={{flex:"0 1 auto",maxHeight:"40vh"}}/>
-              {(box.imageUrl||ytId(box.videoUrl))&&<div style={{flexShrink:0,maxHeight:"20vh",overflow:"hidden",marginTop:"1.5vh",width:"100%",display:"flex",justifyContent:"center"}}>
+              {(box.imageUrl||ytId(box.videoUrl)||(box.localVideoUrl&&showVideo))&&<div style={{flexShrink:0,maxHeight:"30vh",overflow:"hidden",marginTop:"1.5vh",width:"100%",display:"flex",justifyContent:"center"}}>
                 {box.imageUrl&&<img src={box.imageUrl} alt="" onClick={()=>setLightboxSrc(box.imageUrl)} style={{maxWidth:"100%",maxHeight:"20vh",borderRadius:10,objectFit:"contain",cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/>}
                 {ytId(box.videoUrl)&&<div style={{width:"100%",maxWidth:400,aspectRatio:"16/9",borderRadius:10,overflow:"hidden"}}><iframe src={`https://www.youtube.com/embed/${ytId(box.videoUrl)}`} title="Video" style={{width:"100%",height:"100%",border:"none"}} allowFullScreen/></div>}
+                {box.localVideoUrl&&showVideo&&<video src={box.localVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"30vh",borderRadius:10}}/>}
               </div>}
+              {box.localVideoUrl&&!showVideo&&<button onClick={()=>setShowVideo(true)} style={{marginTop:"1.2vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,flexShrink:0}}>▶ Play Video</button>}
               {(timerSeconds||0)>0&&<div style={{flexShrink:0,width:"100%"}}><Timer seconds={timerSeconds}/></div>}
               {hasAnswer&&!hasAnswerImg&&!showAnswer&&<button onClick={revealAns} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,flexShrink:0}}>Reveal Answer</button>}
               {hasAnswer&&hasAnswerImg&&<button onClick={revealAns} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,flexShrink:0}}>Reveal Answer →</button>}
@@ -1582,6 +1609,10 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           <div style={{fontWeight:500,fontSize:"clamp(.9rem,2.2vh,1.3rem)",color:T.textSoft,marginBottom:"3vh"}}>{box.subtitle}</div>
           <div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:qStyle.fontWeight,letterSpacing:qStyle.fontWeight<500?0:-.3,fontFamily:qStyle.fontFamily,textAlign:qStyle.textAlign}} dangerouslySetInnerHTML={{__html:box.question}}/>
           <MediaPreview imageUrl={box.imageUrl} videoUrl={box.videoUrl} maxHeight="35vh" onImageClick={setLightboxSrc}/>
+          {box.localVideoUrl&&showVideo&&<div style={{marginTop:"2vh",display:"flex",justifyContent:"center"}}>
+            <video src={box.localVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"45vh",borderRadius:12,boxShadow:"0 4px 20px rgba(0,0,0,.1)"}}/>
+          </div>}
+          {box.localVideoUrl&&!showVideo&&<button onClick={()=>setShowVideo(true)} style={{marginTop:"2vh",padding:"12px 32px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,transition:"all .15s"}}>▶ Play Video</button>}
           {(timerSeconds||0)>0&&<Timer seconds={timerSeconds}/>}
           {hasAnswer&&!hasAnswerImg&&!showAnswer&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer</button>}
           {hasAnswer&&hasAnswerImg&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer →</button>}
@@ -1591,7 +1622,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           </div>}
         </div>
         <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><Btn onClick={goBack} style={{fontSize:15,padding:"12px 32px"}}>← Back to Board</Btn></div>
-        <p style={{color:T.textMuted,fontSize:12,marginTop:8,flexShrink:0}}>Esc = back · Space = reveal · Arrow keys to navigate · Right-click cells to un-gray · Click images to enlarge</p>
+        <p style={{color:T.textMuted,fontSize:12,marginTop:8,flexShrink:0}}>Esc = back · Space = reveal · Right-click cells to un-gray · Click images to enlarge</p>
       </div>
     </>);
   }
@@ -1615,7 +1646,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
         <div style={{position:"absolute",inset:0,display:"grid",gridTemplateColumns:`repeat(${columns},1fr)`,gridTemplateRows:`repeat(${rows},1fr)`,gap:`${Math.min(.6,3/rows)}vh ${Math.min(.4,2/columns)}vw`}}>
           {order.slice(0,total).map((origIdx,pos)=>{
             const box=origIdx<boxes.length?boxes[origIdx]:null;const isV=visited[origIdx];
-            const isHL=pos===highlightPos;
+            const isHover=!isV&&pos===hoveredPos;
             if(!box)return<div key={pos} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,opacity:.06}}/>;
             const cat=categories[box.catIdx]||{name:"?",color:"#999"};
             const cellBg=cellBgCss(box,theme,T.surface);
@@ -1623,23 +1654,27 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
             const outerBorder=box.borderOverride||theme.cellBorder||T.border;
             const cellOpacity=box.cellOpacity!=null?box.cellOpacity:(theme.cellOpacity??1);
             const hasGrad=(box.bgOverrideType==="gradient"||(!box.bgOverride&&theme.cellType==="gradient"));
-            return(<div key={pos} onClick={()=>!isV&&openQuestion(origIdx)}
+            return(<div key={pos}
+              onClick={()=>!isV&&openQuestion(origIdx)}
+              onMouseEnter={()=>!isV&&setHoveredPos(pos)}
+              onMouseLeave={()=>setHoveredPos(p=>p===pos?null:p)}
               onContextMenu={e=>{e.preventDefault();if(isV)unvisit(origIdx)}}
               style={{
                 background:isV?"#e5e4e0":cellBg,
-                border:isHL&&!isV?`2px solid ${borderColor}`:`1px solid ${outerBorder}`,
+                border:`1px solid ${outerBorder}`,
                 borderRadius:10,
                 borderLeft:`4px solid ${borderColor}`,
                 display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
                 gap:"0.3vh",
-                transition:"transform .15s,box-shadow .15s,opacity .2s,border-color .15s",
+                transition:"transform 180ms cubic-bezier(.2,.7,.2,1), box-shadow 180ms cubic-bezier(.2,.7,.2,1), opacity 180ms",
                 userSelect:"none",overflow:"hidden",
                 opacity:isV?0.2:cellOpacity,
                 cursor:isV?"context-menu":"pointer",
-                transform:isHL&&!isV?"scale(1.06)":"scale(1)",
-                zIndex:isHL&&!isV?5:1,
-                boxShadow:isHL&&!isV?`0 12px 32px ${borderColor}55, 0 0 0 3px ${borderColor}22`:((!isV&&theme.cellShadow)?"0 4px 12px rgba(0,0,0,.2)":"none"),
+                transform:isHover?"translateY(-3px) scale(1.03)":"translateY(0) scale(1)",
+                zIndex:isHover?5:1,
+                boxShadow:isHover?`0 10px 28px ${borderColor}44`:((!isV&&theme.cellShadow)?"0 4px 12px rgba(0,0,0,.15)":"none"),
                 position:"relative",
+                willChange:"transform",
               }}>
               <span style={{fontWeight:800,fontSize:`clamp(.55rem,${cfv}vh,1.8rem)`,lineHeight:1.1,letterSpacing:-.3,color:isV?"#999":cat.color,textShadow:(!isV&&hasGrad)?"0 1px 2px rgba(255,255,255,.4)":"none",...(isV?strike:{})}}>{cat.name}</span>
               <span style={{fontWeight:500,fontSize:`clamp(.4rem,${sfv}vh,1.1rem)`,lineHeight:1.1,color:isV?"#bbb":T.textSoft,...(isV?strike:{})}}>{box.subtitle}</span>
