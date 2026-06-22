@@ -503,6 +503,7 @@ async function exportGameHTML(game){
     if(b.imageUrl)allImageUrls.push(b.imageUrl);
     if(b.answerImageUrl)allImageUrls.push(b.answerImageUrl);
     if(b.localVideoUrl)allVideoUrls.push(b.localVideoUrl);
+    if(b.localAnswerVideoUrl)allVideoUrls.push(b.localAnswerVideoUrl);
   });
   if(game.theme?.bgImageUrl)allImageUrls.push(game.theme.bgImageUrl);
 
@@ -550,6 +551,7 @@ async function exportGameHTML(game){
     if(b.imageUrl&&urlMap[b.imageUrl])b.imageUrl=urlMap[b.imageUrl].data;
     if(b.answerImageUrl&&urlMap[b.answerImageUrl])b.answerImageUrl=urlMap[b.answerImageUrl].data;
     if(b.localVideoUrl&&urlMap[b.localVideoUrl])b.localVideoUrl=urlMap[b.localVideoUrl].data;
+    if(b.localAnswerVideoUrl&&urlMap[b.localAnswerVideoUrl])b.localAnswerVideoUrl=urlMap[b.localAnswerVideoUrl].data;
   });
   if(embeddedGame.theme?.bgImageUrl&&urlMap[embeddedGame.theme.bgImageUrl]){
     embeddedGame.theme.bgImageUrl=urlMap[embeddedGame.theme.bgImageUrl].data;
@@ -646,6 +648,8 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 <div id="aCat2" style="font-size:clamp(.7rem,1.6vh,.9rem);font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#04a87e;margin-bottom:.3vh;flex-shrink:0"></div>
 <div class="fittext" id="aFit2" style="max-height:35vh"><div class="fittext-inner" id="aText2"></div></div>
 <div id="aImg2" style="margin-top:1.5vh;flex-shrink:0;max-height:40vh;overflow:hidden"></div>
+<button id="playAVideoBtn" class="reveal-btn hidden" style="background:#04a87e14;color:#04a87e;border:2px solid #04a87e44;margin-top:1.5vh" onclick="playAVideo()">▶ Play Answer Video</button>
+<div id="aVideoBox" class="hidden" style="margin-top:1.5vh;flex-shrink:0;width:100%;display:flex;justify-content:center"></div>
 </div></div>
 <div class="q-btns"><button class="pill" style="font-size:14px;padding:10px 28px" onclick="backToQ()">← Back to Question</button></div>
 </div>
@@ -748,9 +752,10 @@ const pvb=document.getElementById("playVideoBtn"),lvb=document.getElementById("l
 lvb.innerHTML="";lvb.classList.add("hidden");
 if(box.localVideoUrl){pvb.classList.remove("hidden")}else{pvb.classList.add("hidden")}
 const rb=document.getElementById("revealBtn"),ab=document.getElementById("answerBox");
-const hasA=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim());
+const hasA=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim())||(box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim());
 const hasAImg=box.answerImageUrl&&box.answerImageUrl.trim();
-if(hasA){rb.classList.remove("hidden");rb.style.background=cat.color+"14";rb.style.color=cat.color;rb.style.border="2px solid "+cat.color+"44";rb.textContent=hasAImg?"Reveal Answer →":"Reveal Answer"}else{rb.classList.add("hidden")}
+const hasAVid=box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim();
+if(hasA){rb.classList.remove("hidden");rb.style.background=cat.color+"14";rb.style.color=cat.color;rb.style.border="2px solid "+cat.color+"44";rb.textContent=(hasAImg||hasAVid)?"Reveal Answer →":"Reveal Answer"}else{rb.classList.add("hidden")}
 ab.classList.add("hidden");
 const aTextEl=document.getElementById("aText");aTextEl.innerHTML=box.answer||"";applyStyle(aTextEl,box,"answer");
 document.getElementById("gridPage").classList.add("hidden");document.getElementById("qPage").classList.remove("hidden");document.getElementById("answerPage").classList.add("hidden");
@@ -769,26 +774,45 @@ function playLocalVideo(){
   lvb.appendChild(v);
   lvb.classList.remove("hidden");
 }
+function playAVideo(){
+  if(curIdx==null)return;
+  const box=boxes[curIdx];if(!box.localAnswerVideoUrl)return;
+  const pvb=document.getElementById("playAVideoBtn"),lvb=document.getElementById("aVideoBox");
+  pvb.classList.add("hidden");
+  lvb.innerHTML="";
+  const v=document.createElement("video");
+  v.src=box.localAnswerVideoUrl;v.controls=true;v.autoplay=true;
+  v.style.cssText="max-width:100%;max-height:50vh;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1)";
+  lvb.appendChild(v);
+  lvb.classList.remove("hidden");
+}
 function stopLocalVideo(){
-  const lvb=document.getElementById("localVideoBox");
-  if(!lvb)return;
-  const vids=lvb.querySelectorAll("video");
-  vids.forEach(v=>{try{v.pause()}catch(e){}});
-  lvb.innerHTML="";lvb.classList.add("hidden");
+  ["localVideoBox","aVideoBox"].forEach(id=>{
+    const lvb=document.getElementById(id);
+    if(!lvb)return;
+    const vids=lvb.querySelectorAll("video");
+    vids.forEach(v=>{try{v.pause()}catch(e){}});
+    lvb.innerHTML="";lvb.classList.add("hidden");
+  });
 }
 function revealAnswer(){
 const box=boxes[curIdx],cat=cats[box.catIdx]||{name:"?",color:"#999"};
 const hasAImg=box.answerImageUrl&&box.answerImageUrl.trim();
+const hasAVid=box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim();
 stopLocalVideo();
-if(hasAImg){document.getElementById("aCat2").textContent=cat.name+" — Answer";
+if(hasAImg||hasAVid){document.getElementById("aCat2").textContent=cat.name+" — Answer";
 const aTextEl2=document.getElementById("aText2");aTextEl2.innerHTML=box.answer||"";applyStyle(aTextEl2,box,"answer");
 const c=document.getElementById("aImg2");c.innerHTML="";
-const img=document.createElement("img");img.src=box.answerImageUrl;img.style.cssText="max-width:100%;max-height:40vh;border-radius:12px;object-fit:contain;border:1px solid #04a87e44;cursor:zoom-in";img.onclick=()=>openLightbox(box.answerImageUrl);img.onerror=()=>img.style.display="none";c.appendChild(img);
+if(hasAImg){const img=document.createElement("img");img.src=box.answerImageUrl;img.style.cssText="max-width:100%;max-height:40vh;border-radius:12px;object-fit:contain;border:1px solid #04a87e44;cursor:zoom-in";img.onclick=()=>openLightbox(box.answerImageUrl);img.onerror=()=>img.style.display="none";c.appendChild(img)}
+// Answer video: show Play button, reset player
+const pavb=document.getElementById("playAVideoBtn"),avb=document.getElementById("aVideoBox");
+avb.innerHTML="";avb.classList.add("hidden");
+if(hasAVid){pavb.classList.remove("hidden")}else{pavb.classList.add("hidden")}
 document.getElementById("qPage").classList.add("hidden");document.getElementById("answerPage").classList.remove("hidden");
 onAnswerPage=true;setTimeout(()=>{fitText("aFit2","aText2",80,14)},50);history.pushState({v:"a"},"")
 }else{document.getElementById("revealBtn").classList.add("hidden");document.getElementById("answerBox").classList.remove("hidden");
 setTimeout(()=>{fitText("aFit","aText",60,12)},50)}}
-function backToQ(){onAnswerPage=false;document.getElementById("answerPage").classList.add("hidden");document.getElementById("qPage").classList.remove("hidden")}
+function backToQ(){stopLocalVideo();onAnswerPage=false;document.getElementById("answerPage").classList.add("hidden");document.getElementById("qPage").classList.remove("hidden")}
 function goBack(){clearInterval(timerInterval);stopLocalVideo();curIdx=null;onAnswerPage=false;document.getElementById("qPage").classList.add("hidden");document.getElementById("answerPage").classList.add("hidden");document.getElementById("gridPage").classList.remove("hidden");buildGrid()}
 function scramble(){for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[order[i],order[j]]=[order[j],order[i]]}buildGrid()}
 function resetBoard(){visited={};order=boxes.map((_,i)=>i);buildGrid()}
@@ -1181,7 +1205,7 @@ function Editor({game,onSave,onPlay,onBack}){
   // Drag state
   const[dragIdx,setDragIdx]=useState(null);
 
-  const cellFilled=b=>b&&(b.question||b.subtitle||b.answer||b.imageUrl||b.videoUrl||b.localVideoUrl||b.answerImageUrl);
+  const cellFilled=b=>b&&(b.question||b.subtitle||b.answer||b.imageUrl||b.videoUrl||b.localVideoUrl||b.answerImageUrl||b.localAnswerVideoUrl);
 
   return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font,display:"flex",flexDirection:"column",position:"relative"}}>
     {/* Background image/color — sits behind ALL editor UI */}
@@ -1285,7 +1309,7 @@ function Editor({game,onSave,onPlay,onBack}){
               <span style={{fontWeight:500,fontSize:11,color:T.textSoft,lineHeight:1.1,textAlign:"center"}}>{box.subtitle||"—"}</span>
               {filled&&<div style={{position:"absolute",top:6,right:6,width:7,height:7,borderRadius:4,background:T.success}}/>}
               {(box.imageUrl||box.answerImageUrl)&&<div style={{position:"absolute",bottom:6,right:6,fontSize:10,color:T.textMuted}}>🖼</div>}
-              {box.localVideoUrl&&<div style={{position:"absolute",bottom:6,left:10,fontSize:10,color:T.textMuted}}>🎬</div>}
+              {(box.localVideoUrl||box.localAnswerVideoUrl)&&<div style={{position:"absolute",bottom:6,left:10,fontSize:10,color:T.textMuted}}>🎬</div>}
               {(box.bgOverride||box.borderOverride||box.cellOpacity!=null)&&<div style={{position:"absolute",top:6,left:10,fontSize:9,color:T.textMuted}}>🎨</div>}
             </div>);
           })}
@@ -1344,9 +1368,11 @@ function Editor({game,onSave,onPlay,onBack}){
           {editBox.videoUrl&&<div style={{marginTop:6}}><MediaPreview videoUrl={editBox.videoUrl} maxHeight="100px"/></div>}
         </div>
 
-        <VideoUpload value={editBox.localVideoUrl||""} onChange={v=>updateCell(editIdx,"localVideoUrl",v)} label="🎬 Local Video (offline-ready)" color="#6c4dcf"/>
+        <VideoUpload value={editBox.localVideoUrl||""} onChange={v=>updateCell(editIdx,"localVideoUrl",v)} label="🎬 Question Video (offline-ready)" color="#6c4dcf"/>
 
         <ImageUpload value={editBox.answerImageUrl||""} onChange={v=>updateCell(editIdx,"answerImageUrl",v)} label="🖼 Answer Image" color={T.success} borderColor={T.success+"44"}/>
+
+        <VideoUpload value={editBox.localAnswerVideoUrl||""} onChange={v=>updateCell(editIdx,"localAnswerVideoUrl",v)} label="🎬 Answer Video (offline-ready)" color={T.success} borderColor={T.success+"44"}/>
 
         {/* Per-cell color overrides */}
         <div style={{marginTop:6,paddingTop:10,borderTop:`1px solid ${T.borderLight}`}}>
@@ -1476,14 +1502,15 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   const[scores,setScores]=useState([]);
   const[lightboxSrc,setLightboxSrc]=useState(null);
   const[hoveredPos,setHoveredPos]=useState(null);
-  const[showVideo,setShowVideo]=useState(false);
+  const[showVideoQ,setShowVideoQ]=useState(false);
+  const[showVideoA,setShowVideoA]=useState(false);
 
   const cfv=Math.min(2.8,15/rows),sfv=Math.min(2,10/rows);
   const total=columns*rows;
   const strike={textDecoration:"line-through",textDecorationColor:"#c43040",textDecorationThickness:"2.5px"};
 
   const unvisit=i=>{setVisited(p=>{const n={...p};delete n[i];return n})};
-  const reset=()=>{setVisited({});setActiveIdx(null);setShowAnswer(false);setShowVideo(false);setOrder(boxes.map((_,i)=>i))};
+  const reset=()=>{setVisited({});setActiveIdx(null);setShowAnswer(false);setShowVideoQ(false);setShowVideoA(false);setOrder(boxes.map((_,i)=>i))};
   const doScramble=useCallback(()=>setOrder(p=>shuffle(p)),[]);
   const toggleFS=()=>{if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen()};
 
@@ -1491,8 +1518,8 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   useEffect(()=>{
     const onPop=()=>{
       if(activeIdx!==null){
-        if(showAnswer){setShowAnswer(false);setShowVideo(false)}
-        else{setActiveIdx(null);setShowAnswer(false);setShowVideo(false)}
+        if(showAnswer){setShowAnswer(false);setShowVideoA(false)}
+        else{setActiveIdx(null);setShowAnswer(false);setShowVideoQ(false);setShowVideoA(false)}
       }
     };
     window.addEventListener("popstate",onPop);
@@ -1500,17 +1527,16 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   },[activeIdx,showAnswer]);
 
   const openQuestion=i=>{
-    setVisited(p=>({...p,[i]:true}));setActiveIdx(i);setShowAnswer(false);setShowVideo(false);
+    setVisited(p=>({...p,[i]:true}));setActiveIdx(i);setShowAnswer(false);setShowVideoQ(false);setShowVideoA(false);
     window.history.pushState({view:"question"},"");
   };
   const revealAns=()=>{
-    setShowAnswer(true);setShowVideo(false);
+    setShowAnswer(true);setShowVideoQ(false);setShowVideoA(false);
     window.history.pushState({view:"answer"},"");
   };
   const goBack=()=>{
-    if(showAnswer){setShowAnswer(false)}
-    else{setActiveIdx(null);setShowAnswer(false)}
-    setShowVideo(false);
+    if(showAnswer){setShowAnswer(false);setShowVideoA(false)}
+    else{setActiveIdx(null);setShowAnswer(false);setShowVideoQ(false);setShowVideoA(false)}
   };
 
   useEffect(()=>{
@@ -1526,10 +1552,11 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
     window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);
   },[activeIdx,showAnswer]);
 
-  // ─── ANSWER PAGE (separate full page when answer has image) ───
+  // ─── ANSWER PAGE (separate full page when answer has image or video) ───
   if(activeIdx!==null&&activeIdx<boxes.length&&showAnswer){
     const box=boxes[activeIdx];const cat=categories[box.catIdx]||{name:"?",color:"#999"};
     const hasImg=box.answerImageUrl&&box.answerImageUrl.trim();
+    const hasVid=box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim();
     const aStyle=resolveTextStyle(box,theme,"answer");
 
     if(autoFit){
@@ -1539,8 +1566,10 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:0}}>
             <div style={{background:"#f0faf6",border:`1.5px solid ${T.success}33`,borderRadius:20,padding:"2.5vh 2.5vw",maxWidth:1200,width:"100%",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",overflow:"hidden",maxHeight:"84vh"}}>
               <div style={{fontSize:"clamp(.7rem,1.6vh,.9rem)",fontWeight:700,textTransform:"uppercase",letterSpacing:2,color:T.success,marginBottom:".3vh",flexShrink:0}}>{cat.name} — Answer</div>
-              {box.answer&&box.answer.trim()&&<AutoFitText html={box.answer} baseSizePx={80} minSizePx={14} fontFamily={aStyle.fontFamily} fontWeight={aStyle.fontWeight} textAlign={aStyle.textAlign} style={{flex:"0 1 auto",maxHeight:hasImg?"30vh":"50vh"}}/>}
-              {hasImg&&<img src={box.answerImageUrl} alt="" onClick={()=>setLightboxSrc(box.answerImageUrl)} style={{maxWidth:"100%",flex:"0 1 auto",maxHeight:"40vh",borderRadius:12,objectFit:"contain",marginTop:"1.5vh",border:`1px solid ${T.success}44`,cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/>}
+              {box.answer&&box.answer.trim()&&<AutoFitText html={box.answer} baseSizePx={80} minSizePx={14} fontFamily={aStyle.fontFamily} fontWeight={aStyle.fontWeight} textAlign={aStyle.textAlign} style={{flex:"0 1 auto",maxHeight:(hasImg||(hasVid&&showVideoA))?"25vh":"50vh"}}/>}
+              {hasImg&&<img src={box.answerImageUrl} alt="" onClick={()=>setLightboxSrc(box.answerImageUrl)} style={{maxWidth:"100%",flex:"0 1 auto",maxHeight:"35vh",borderRadius:12,objectFit:"contain",marginTop:"1.5vh",border:`1px solid ${T.success}44`,cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/>}
+              {hasVid&&showVideoA&&<video src={box.localAnswerVideoUrl} controls autoPlay style={{maxWidth:"100%",flex:"0 1 auto",maxHeight:"35vh",borderRadius:12,marginTop:"1.5vh"}}/>}
+              {hasVid&&!showVideoA&&<button onClick={()=>setShowVideoA(true)} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:T.success+"14",color:T.success,border:`2px solid ${T.success}44`,borderRadius:50,flexShrink:0}}>▶ Play Answer Video</button>}
             </div>
           </div>
           <div style={{display:"flex",justifyContent:"center",gap:12,flexShrink:0,paddingTop:"0.8vh"}}><Btn onClick={goBack} style={{fontSize:14,padding:"10px 28px"}}>← Back to Question</Btn></div>
@@ -1556,6 +1585,8 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           <div style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:3,color:T.success,marginBottom:"1vh"}}>{cat.name} — Answer</div>
           {box.answer&&box.answer.trim()&&<div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:aStyle.fontWeight,fontFamily:aStyle.fontFamily,textAlign:aStyle.textAlign}} dangerouslySetInnerHTML={{__html:box.answer}}/>}
           {hasImg&&<div style={{marginTop:"2vh"}}><img src={box.answerImageUrl} alt="" onClick={()=>setLightboxSrc(box.answerImageUrl)} style={{maxWidth:"100%",maxHeight:"50vh",borderRadius:12,objectFit:"contain",border:`1px solid ${T.success}44`,cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/></div>}
+          {hasVid&&showVideoA&&<div style={{marginTop:"2vh",display:"flex",justifyContent:"center"}}><video src={box.localAnswerVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"50vh",borderRadius:12,boxShadow:"0 4px 20px rgba(0,0,0,.1)"}}/></div>}
+          {hasVid&&!showVideoA&&<button onClick={()=>setShowVideoA(true)} style={{marginTop:"2vh",padding:"12px 32px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:T.success+"14",color:T.success,border:`2px solid ${T.success}44`,borderRadius:50,transition:"all .15s"}}>▶ Play Answer Video</button>}
         </div>
         <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><Btn onClick={goBack} style={{fontSize:15,padding:"12px 32px"}}>← Back to Question</Btn></div>
       </div>
@@ -1565,8 +1596,10 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   // ─── QUESTION PAGE ───
   if(activeIdx!==null&&activeIdx<boxes.length){
     const box=boxes[activeIdx];const cat=categories[box.catIdx]||{name:"?",color:"#999"};
-    const hasAnswer=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim());
+    const hasAnswer=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim())||(box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim());
     const hasAnswerImg=box.answerImageUrl&&box.answerImageUrl.trim();
+    const hasAnswerVid=box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim();
+    const hasAnswerMedia=hasAnswerImg||hasAnswerVid;
     const qStyle=resolveTextStyle(box,theme,"question");
     const aStyleInline=resolveTextStyle(box,theme,"answer");
     // If answer has image → reveal goes to separate page. If no image → inline reveal.
@@ -1580,16 +1613,16 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
               <div style={{fontWeight:800,fontSize:"clamp(.8rem,2.2vh,1.3rem)",textTransform:"uppercase",letterSpacing:3,marginBottom:".3vh",color:cat.color,fontFamily:T.font,flexShrink:0}}>{cat.name}</div>
               <div style={{fontWeight:500,fontSize:"clamp(.7rem,1.8vh,1rem)",color:T.textSoft,marginBottom:"1.5vh",flexShrink:0}}>{box.subtitle}</div>
               <AutoFitText html={box.question} baseSizePx={80} minSizePx={14} fontFamily={qStyle.fontFamily} fontWeight={qStyle.fontWeight} textAlign={qStyle.textAlign} style={{flex:"0 1 auto",maxHeight:"40vh"}}/>
-              {(box.imageUrl||ytId(box.videoUrl)||(box.localVideoUrl&&showVideo))&&<div style={{flexShrink:0,maxHeight:"30vh",overflow:"hidden",marginTop:"1.5vh",width:"100%",display:"flex",justifyContent:"center"}}>
+              {(box.imageUrl||ytId(box.videoUrl)||(box.localVideoUrl&&showVideoQ))&&<div style={{flexShrink:0,maxHeight:"30vh",overflow:"hidden",marginTop:"1.5vh",width:"100%",display:"flex",justifyContent:"center"}}>
                 {box.imageUrl&&<img src={box.imageUrl} alt="" onClick={()=>setLightboxSrc(box.imageUrl)} style={{maxWidth:"100%",maxHeight:"20vh",borderRadius:10,objectFit:"contain",cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/>}
                 {ytId(box.videoUrl)&&<div style={{width:"100%",maxWidth:400,aspectRatio:"16/9",borderRadius:10,overflow:"hidden"}}><iframe src={`https://www.youtube.com/embed/${ytId(box.videoUrl)}`} title="Video" style={{width:"100%",height:"100%",border:"none"}} allowFullScreen/></div>}
-                {box.localVideoUrl&&showVideo&&<video src={box.localVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"30vh",borderRadius:10}}/>}
+                {box.localVideoUrl&&showVideoQ&&<video src={box.localVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"30vh",borderRadius:10}}/>}
               </div>}
-              {box.localVideoUrl&&!showVideo&&<button onClick={()=>setShowVideo(true)} style={{marginTop:"1.2vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,flexShrink:0}}>▶ Play Video</button>}
+              {box.localVideoUrl&&!showVideoQ&&<button onClick={()=>setShowVideoQ(true)} style={{marginTop:"1.2vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,flexShrink:0}}>▶ Play Video</button>}
               {(timerSeconds||0)>0&&<div style={{flexShrink:0,width:"100%"}}><Timer seconds={timerSeconds}/></div>}
-              {hasAnswer&&!hasAnswerImg&&!showAnswer&&<button onClick={revealAns} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,flexShrink:0}}>Reveal Answer</button>}
-              {hasAnswer&&hasAnswerImg&&<button onClick={revealAns} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,flexShrink:0}}>Reveal Answer →</button>}
-              {hasAnswer&&!hasAnswerImg&&showAnswer&&<div style={{marginTop:"1.5vh",padding:"1.5vh 2vw",background:"#f0faf6",borderRadius:12,border:`1.5px solid ${T.success}33`,width:"100%",flexShrink:0}}>
+              {hasAnswer&&!hasAnswerMedia&&!showAnswer&&<button onClick={revealAns} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,flexShrink:0}}>Reveal Answer</button>}
+              {hasAnswer&&hasAnswerMedia&&<button onClick={revealAns} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,flexShrink:0}}>Reveal Answer →</button>}
+              {hasAnswer&&!hasAnswerMedia&&showAnswer&&<div style={{marginTop:"1.5vh",padding:"1.5vh 2vw",background:"#f0faf6",borderRadius:12,border:`1.5px solid ${T.success}33`,width:"100%",flexShrink:0}}>
                 <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:2,color:T.success,marginBottom:4}}>Answer</div>
                 <AutoFitText html={box.answer} baseSizePx={60} minSizePx={12} fontFamily={aStyleInline.fontFamily} fontWeight={aStyleInline.fontWeight} textAlign={aStyleInline.textAlign} style={{maxHeight:"15vh"}}/>
               </div>}
@@ -1609,14 +1642,14 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           <div style={{fontWeight:500,fontSize:"clamp(.9rem,2.2vh,1.3rem)",color:T.textSoft,marginBottom:"3vh"}}>{box.subtitle}</div>
           <div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:qStyle.fontWeight,letterSpacing:qStyle.fontWeight<500?0:-.3,fontFamily:qStyle.fontFamily,textAlign:qStyle.textAlign}} dangerouslySetInnerHTML={{__html:box.question}}/>
           <MediaPreview imageUrl={box.imageUrl} videoUrl={box.videoUrl} maxHeight="35vh" onImageClick={setLightboxSrc}/>
-          {box.localVideoUrl&&showVideo&&<div style={{marginTop:"2vh",display:"flex",justifyContent:"center"}}>
+          {box.localVideoUrl&&showVideoQ&&<div style={{marginTop:"2vh",display:"flex",justifyContent:"center"}}>
             <video src={box.localVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"45vh",borderRadius:12,boxShadow:"0 4px 20px rgba(0,0,0,.1)"}}/>
           </div>}
-          {box.localVideoUrl&&!showVideo&&<button onClick={()=>setShowVideo(true)} style={{marginTop:"2vh",padding:"12px 32px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,transition:"all .15s"}}>▶ Play Video</button>}
+          {box.localVideoUrl&&!showVideoQ&&<button onClick={()=>setShowVideoQ(true)} style={{marginTop:"2vh",padding:"12px 32px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,transition:"all .15s"}}>▶ Play Video</button>}
           {(timerSeconds||0)>0&&<Timer seconds={timerSeconds}/>}
-          {hasAnswer&&!hasAnswerImg&&!showAnswer&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer</button>}
-          {hasAnswer&&hasAnswerImg&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer →</button>}
-          {hasAnswer&&!hasAnswerImg&&showAnswer&&<div style={{marginTop:"3vh",padding:"3vh 3vw",background:"#f0faf6",borderRadius:16,border:`1.5px solid ${T.success}33`}}>
+          {hasAnswer&&!hasAnswerMedia&&!showAnswer&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer</button>}
+          {hasAnswer&&hasAnswerMedia&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer →</button>}
+          {hasAnswer&&!hasAnswerMedia&&showAnswer&&<div style={{marginTop:"3vh",padding:"3vh 3vw",background:"#f0faf6",borderRadius:16,border:`1.5px solid ${T.success}33`}}>
             <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:2,color:T.success,marginBottom:8}}>Answer</div>
             <div style={{fontSize:"clamp(1.2rem,4vh,2.6rem)",lineHeight:1.3,color:T.text,fontWeight:aStyleInline.fontWeight,fontFamily:aStyleInline.fontFamily,textAlign:aStyleInline.textAlign}} dangerouslySetInnerHTML={{__html:box.answer}}/>
           </div>}
