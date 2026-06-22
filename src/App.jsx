@@ -108,6 +108,48 @@ async function saveGameToDB(userId,game){
   try{await setDoc(doc(db,"users",userId,"games",game.id),game)}
   catch(e){console.error("Save error:",e)}
 }
+
+// Safer save: checks if cloud has been modified since we loaded this game.
+// If it's newer, warns the user and lets them choose (overwrite, cancel, or download both as JSON).
+// Returns true if save proceeded, false if cancelled.
+async function saveGameSafely(userId,game){
+  if(!userId)return false;
+  const localBase=game._localLoadedAt||0;
+  try{
+    const snap=await getDoc(doc(db,"users",userId,"games",game.id));
+    if(snap.exists()){
+      const cloud=snap.data();
+      const cloudSaved=cloud._savedAt||0;
+      // If cloud is at least 5 seconds newer than what we loaded → suspicious.
+      // (5s grace allows for legitimate clock skew or near-simultaneous edits in the same tab.)
+      if(cloudSaved>localBase+5000){
+        const fmt=ts=>ts?new Date(ts).toLocaleString():"(unknown)";
+        const msg=
+          `⚠️ Cloud version was modified after this tab loaded the game.\n\n`+
+          `This tab loaded: ${fmt(localBase)}\n`+
+          `Cloud last saved: ${fmt(cloudSaved)}\n\n`+
+          `Saving now will OVERWRITE the cloud version with what's in this tab.\n\n`+
+          `Choose:\n`+
+          `  OK    → overwrite the cloud (you lose the newer cloud changes)\n`+
+          `  Cancel → keep the cloud as-is (your local changes stay in this tab; consider exporting JSON before deciding)`;
+        const proceed=window.confirm(msg);
+        if(!proceed){
+          // Offer to download a JSON snapshot of the in-memory tab so user can decide later
+          if(window.confirm("Download a JSON backup of THIS TAB's version before cancelling? You can re-import it later if you want.")){
+            downloadJsonBackup(game,"unsaved");
+          }
+          return false;
+        }
+      }
+    }
+  }catch(e){
+    console.warn("Pre-save check failed (will save anyway):",e);
+  }
+  // Stamp and save
+  const stamped={...game,_savedAt:Date.now()};
+  await saveGameToDB(userId,stamped);
+  return true;
+}
 async function deleteGameFromDB(userId,gameId){
   try{await deleteDoc(doc(db,"users",userId,"games",gameId))}
   catch(e){console.error("Delete error:",e)}
@@ -134,6 +176,99 @@ async function loadPublicGame(gameId){
 // Fallback localStorage for offline/unauthenticated use
 function loadGamesLocal(){try{const s=localStorage.getItem("qb_games");if(s)return JSON.parse(s)}catch(e){}return[]}
 function saveGamesLocal(g){try{localStorage.setItem("qb_games",JSON.stringify(g))}catch(e){}}
+
+/* ═══ SAFETY: SNAPSHOT / RECOVERY SYSTEM ═══ */
+// Stores a rolling history of game versions in localStorage so accidental overwrites can be undone.
+// Key per game: qb_snapshots_v1::<gameId>
+// Value: array of {ts, name, source, json}, newest first, capped at MAX_SNAPSHOTS
+const SNAPSHOT_KEY_PREFIX="qb_snapshots_v1::";
+const MAX_SNAPSHOTS=30;
+const SNAPSHOT_QUOTA_MB=4; // cap each game's history at ~4MB to be safe
+
+function snapshotKey(gameId){return SNAPSHOT_KEY_PREFIX+gameId}
+
+function getSnapshots(gameId){
+  try{
+    const raw=localStorage.getItem(snapshotKey(gameId));
+    if(!raw)return[];
+    return JSON.parse(raw);
+  }catch(e){return[]}
+}
+
+function addSnapshot(game,source){
+  if(!game||!game.id)return;
+  try{
+    const list=getSnapshots(game.id);
+    const newSnap={
+      ts:Date.now(),
+      name:game.name||"Untitled",
+      source,
+      // Use a stable JSON string so duplicates of identical state are de-duped
+      json:JSON.stringify(game),
+    };
+    // De-dupe: if newest snapshot has identical json, skip
+    if(list[0]&&list[0].json===newSnap.json)return;
+    list.unshift(newSnap);
+    // Cap by count
+    while(list.length>MAX_SNAPSHOTS)list.pop();
+    // Cap by size (oldest first)
+    let totalSize=list.reduce((s,x)=>s+x.json.length,0);
+    while(list.length>1&&totalSize>SNAPSHOT_QUOTA_MB*1024*1024){
+      const removed=list.pop();
+      totalSize-=removed.json.length;
+    }
+    localStorage.setItem(snapshotKey(game.id),JSON.stringify(list));
+  }catch(e){
+    // localStorage may be full; try to free room by trimming this game's history aggressively
+    try{
+      const list=getSnapshots(game.id);
+      // Keep only 5 most recent
+      const trimmed=list.slice(0,5);
+      localStorage.setItem(snapshotKey(game.id),JSON.stringify(trimmed));
+    }catch(e2){console.warn("Snapshot storage failed:",e2)}
+  }
+}
+
+// List all snapshots across all games (for the Recovery dialog).
+// Returns sorted by timestamp, newest first.
+function getAllSnapshotEntries(){
+  const all=[];
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);
+      if(!key||!key.startsWith(SNAPSHOT_KEY_PREFIX))continue;
+      const gameId=key.slice(SNAPSHOT_KEY_PREFIX.length);
+      const list=getSnapshots(gameId);
+      list.forEach((snap,idx)=>{
+        all.push({gameId,index:idx,...snap});
+      });
+    }
+  }catch(e){}
+  all.sort((a,b)=>b.ts-a.ts);
+  return all;
+}
+
+function deleteSnapshotsForGame(gameId){
+  try{localStorage.removeItem(snapshotKey(gameId))}catch(e){}
+}
+
+// JSON backup auto-download preference
+const BACKUP_PREF_KEY="qb_backup_pref_v1"; // values: "ask" | "always" | "never"
+function getBackupPref(){try{return localStorage.getItem(BACKUP_PREF_KEY)||"ask"}catch(e){return"ask"}}
+function setBackupPref(v){try{localStorage.setItem(BACKUP_PREF_KEY,v)}catch(e){}}
+
+function downloadJsonBackup(game,suffix=""){
+  try{
+    const blob=new Blob([JSON.stringify(game,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    const safeName=(game.name||"quiz").replace(/[^a-z0-9-_]+/gi,"-").toLowerCase();
+    const ts=new Date().toISOString().replace(/[:.]/g,"-").slice(0,19);
+    a.href=url;a.download=`${safeName}${suffix?"-"+suffix:""}-${ts}.json`;
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{URL.revokeObjectURL(url);a.remove()},100);
+  }catch(e){console.error("Backup download failed:",e)}
+}
 
 const DG={name:"Untitled Game",columns:5,rows:5,timerSeconds:0,
   categories:PC.slice(0,5).map((c,i)=>({name:`Category ${i+1}`,color:c})),boxes:[],
@@ -853,12 +988,158 @@ function importGameJSON(file,cb){const r=new FileReader();r.onload=e=>{try{const
 /* ═══════════════════════════════════════
    HOME
    ═══════════════════════════════════════ */
-function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport,user,onSignOut,publishedIds,onPublish,onUnpublish}){
+function RecoveryDialog({games,onClose,onRestore}){
+  const[entries,setEntries]=useState(()=>getAllSnapshotEntries());
+  const[selected,setSelected]=useState(null);
+  const[filter,setFilter]=useState(""); // empty = all games
+
+  const refresh=()=>setEntries(getAllSnapshotEntries());
+
+  const filtered=filter
+    ? entries.filter(e=>e.gameId===filter)
+    : entries;
+
+  const fmtTime=ts=>{
+    const d=new Date(ts);
+    const now=Date.now();
+    const diff=now-ts;
+    const mins=Math.floor(diff/60000);
+    if(mins<1)return"just now";
+    if(mins<60)return mins+" min ago";
+    const hrs=Math.floor(mins/60);
+    if(hrs<24)return hrs+" hr ago";
+    return d.toLocaleString();
+  };
+  const sourceLabel={load:"📥 loaded",edit:"✏️ edit",save:"💾 saved"};
+
+  // Group by game for the picker
+  const gameNames={};
+  entries.forEach(e=>{if(!gameNames[e.gameId])gameNames[e.gameId]=e.name});
+  // Prefer the live game's current name if available
+  games.forEach(g=>{if(gameNames[g.id]||entries.some(e=>e.gameId===g.id))gameNames[g.id]=g.name});
+
+  // Preview of selected snapshot
+  let preview=null;
+  if(selected){
+    try{
+      const parsed=JSON.parse(selected.json);
+      preview={
+        name:parsed.name,
+        boxes:parsed.boxes||[],
+        cats:parsed.categories||[],
+        rows:parsed.rows,cols:parsed.columns,
+      };
+    }catch(e){}
+  }
+
+  const handleRestore=()=>{
+    if(!selected)return;
+    try{
+      const parsed=JSON.parse(selected.json);
+      // Clear stamps so safe-save sees this as a fresh load
+      delete parsed._savedAt;
+      delete parsed._localLoadedAt;
+      if(!window.confirm(`Restore "${parsed.name}" from ${fmtTime(selected.ts)}?\n\nThis will OVERWRITE your current cloud copy of this game.\n\nA backup of the current state will be downloaded as JSON first.`))return;
+      // Save the current version of this game to disk as a safety net
+      const currentGame=games.find(g=>g.id===parsed.id);
+      if(currentGame){downloadJsonBackup(currentGame,"before-restore")}
+      onRestore(parsed);
+      onClose();
+    }catch(e){alert("Failed to restore: "+e.message)}
+  };
+
+  const handleDownload=()=>{
+    if(!selected)return;
+    try{
+      const parsed=JSON.parse(selected.json);
+      downloadJsonBackup(parsed,"snapshot-"+new Date(selected.ts).toISOString().replace(/[:.]/g,"-").slice(0,19));
+    }catch(e){alert("Failed: "+e.message)}
+  };
+
+  return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:20}}>
+    <div onClick={e=>e.stopPropagation()} style={{background:T.surface,borderRadius:16,padding:0,maxWidth:900,width:"100%",maxHeight:"85vh",boxShadow:"0 20px 60px rgba(0,0,0,.2)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <div style={{padding:"20px 24px",borderBottom:`1px solid ${T.borderLight}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexShrink:0}}>
+        <div>
+          <h3 style={{fontSize:20,fontWeight:800,color:T.text,margin:0}}>🛡 Recovery — Local Snapshots</h3>
+          <p style={{fontSize:12,color:T.textSoft,margin:"4px 0 0"}}>Auto-saved versions of your games stored on this device. Pick one to restore or download as JSON.</p>
+        </div>
+        <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,color:T.textMuted,cursor:"pointer",lineHeight:1,padding:4}}>×</button>
+      </div>
+      {entries.length===0?(
+        <div style={{padding:40,textAlign:"center",color:T.textMuted,fontSize:14}}>
+          No snapshots yet. The app starts capturing them automatically as you edit and save games.
+        </div>
+      ):(
+      <div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
+        {/* Left: list */}
+        <div style={{flex:"0 0 360px",borderRight:`1px solid ${T.borderLight}`,overflowY:"auto",display:"flex",flexDirection:"column"}}>
+          <div style={{padding:"10px 14px",borderBottom:`1px solid ${T.borderLight}`,background:T.bg,flexShrink:0}}>
+            <select value={filter} onChange={e=>{setFilter(e.target.value);setSelected(null)}} style={{width:"100%",padding:"6px 10px",border:`1.5px solid ${T.border}`,borderRadius:6,fontSize:12,fontFamily:T.font,background:T.surface,cursor:"pointer"}}>
+              <option value="">All games</option>
+              {Object.entries(gameNames).map(([id,nm])=><option key={id} value={id}>{nm||"(unnamed)"}</option>)}
+            </select>
+          </div>
+          {filtered.map((e,i)=>(
+            <button key={e.gameId+":"+e.index+":"+e.ts} onClick={()=>setSelected(e)}
+              style={{padding:"10px 14px",border:"none",borderBottom:`1px solid ${T.borderLight}`,background:selected===e?T.bg:"transparent",cursor:"pointer",textAlign:"left",fontFamily:T.font}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.name||"(unnamed)"}</div>
+              <div style={{fontSize:11,color:T.textMuted,display:"flex",justifyContent:"space-between",gap:6}}>
+                <span>{sourceLabel[e.source]||e.source}</span>
+                <span>{fmtTime(e.ts)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+        {/* Right: preview */}
+        <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
+          {!selected?(
+            <div style={{color:T.textMuted,fontSize:13,padding:"40px 20px",textAlign:"center"}}>Pick a snapshot on the left to preview it.</div>
+          ):preview?(<>
+            <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:4}}>{preview.name||"(unnamed)"}</div>
+            <div style={{fontSize:12,color:T.textSoft,marginBottom:14}}>
+              {sourceLabel[selected.source]||selected.source} · {new Date(selected.ts).toLocaleString()} · {preview.cols||0}×{preview.rows||0} · {preview.boxes.filter(b=>b.question||b.answer).length} filled cells
+            </div>
+            <div style={{fontSize:11,fontWeight:700,color:T.textMuted,textTransform:"uppercase",letterSpacing:1,marginBottom:6}}>Questions</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:20}}>
+              {preview.boxes.filter(b=>b.question||b.answer).map((b,i)=>{
+                const cat=preview.cats[b.catIdx]||{name:"?",color:"#999"};
+                const stripHtml=s=>(s||"").replace(/<[^>]+>/g," ").replace(/&nbsp;/g," ").trim();
+                const q=stripHtml(b.question);
+                const a=stripHtml(b.answer);
+                return(<div key={i} style={{padding:"8px 10px",border:`1px solid ${T.borderLight}`,borderLeft:`3px solid ${cat.color}`,borderRadius:6,fontSize:12,background:T.surface}}>
+                  <div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:2}}>
+                    <span style={{color:cat.color,fontWeight:700,fontSize:10,textTransform:"uppercase",letterSpacing:.5}}>{cat.name} {b.subtitle?"#"+b.subtitle:""}</span>
+                  </div>
+                  <div style={{color:T.text,marginBottom:2,maxHeight:40,overflow:"hidden",textOverflow:"ellipsis"}}>{q.slice(0,200)}{q.length>200?"…":""}</div>
+                  {a&&<div style={{color:T.success,fontSize:11,fontWeight:600}}>→ {a.slice(0,80)}{a.length>80?"…":""}</div>}
+                </div>);
+              })}
+              {preview.boxes.filter(b=>b.question||b.answer).length===0&&<div style={{color:T.textMuted,fontStyle:"italic",fontSize:12}}>(this snapshot has no filled questions)</div>}
+            </div>
+            <div style={{display:"flex",gap:8,position:"sticky",bottom:0,background:T.surface,paddingTop:12,borderTop:`1px solid ${T.borderLight}`}}>
+              <Btn variant="primary" onClick={handleRestore}>↺ Restore this version</Btn>
+              <Btn onClick={handleDownload}>↓ Download as JSON</Btn>
+            </div>
+          </>):<div style={{color:T.danger}}>Could not parse this snapshot.</div>}
+        </div>
+      </div>
+      )}
+      <div style={{padding:"10px 24px",borderTop:`1px solid ${T.borderLight}`,fontSize:11,color:T.textMuted,display:"flex",justifyContent:"space-between",gap:12,flexShrink:0}}>
+        <span>Snapshots are stored on this device only. Up to {MAX_SNAPSHOTS} per game.</span>
+        <button onClick={refresh} style={{background:"none",border:"none",color:T.textSoft,cursor:"pointer",fontSize:11,fontFamily:T.font,textDecoration:"underline"}}>Refresh</button>
+      </div>
+    </div>
+  </div>);
+}
+
+function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport,user,onSignOut,publishedIds,onPublish,onUnpublish,onRestore}){
   const fileRef=useRef(null);
   const[shareId,setShareId]=useState(null);
+  const[showRecovery,setShowRecovery]=useState(false);
   const shareUrl=shareId?`${window.location.origin}${window.location.pathname}?game=${shareId}`:"";
   const copyShareLink=()=>{navigator.clipboard.writeText(shareUrl);alert("Link copied to clipboard!")};
   return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font}}>
+    {showRecovery&&<RecoveryDialog games={games} onClose={()=>setShowRecovery(false)} onRestore={onRestore}/>}
     <div style={{maxWidth:800,margin:"0 auto",padding:"48px 24px 80px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:40,flexWrap:"wrap",gap:16}}>
         <div><h1 style={{fontSize:36,fontWeight:900,color:T.text,letterSpacing:-1.5,margin:0}}>Quiz Board</h1>
@@ -868,7 +1149,12 @@ function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport,user,onSign
             <button onClick={onSignOut} style={{background:"none",border:"none",fontSize:12,color:T.textMuted,cursor:"pointer",fontFamily:T.font,textDecoration:"underline"}}>Sign out</button>
           </div>}
         </div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><input ref={fileRef} type="file" accept=".json" style={{display:"none"}} onChange={e=>{if(e.target.files[0]){onImport(e.target.files[0]);e.target.value=""}}}/><Btn onClick={()=>fileRef.current?.click()}>Import JSON</Btn><Btn variant="primary" onClick={onCreate} style={{fontSize:15,padding:"12px 28px"}}>+ New Game</Btn></div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <input ref={fileRef} type="file" accept=".json" style={{display:"none"}} onChange={e=>{if(e.target.files[0]){onImport(e.target.files[0]);e.target.value=""}}}/>
+          <Btn onClick={()=>setShowRecovery(true)} title="View and restore local snapshots">🛡 Recovery</Btn>
+          <Btn onClick={()=>fileRef.current?.click()}>Import JSON</Btn>
+          <Btn variant="primary" onClick={onCreate} style={{fontSize:15,padding:"12px 28px"}}>+ New Game</Btn>
+        </div>
       </div>
 
       {/* Share link modal */}
@@ -1194,8 +1480,44 @@ function Editor({game,onSave,onPlay,onBack}){
   const swapCells=(a,b)=>setGrid(p=>{const n=[...p];[n[a],n[b]]=[n[b],n[a]];return n});
 
   const getData=()=>({...game,name,categories:cats,boxes:grid.slice(0,cols*rws),columns:cols,rows:rws,timerSeconds:timer,theme});
-  const handleSave=()=>{onSave(getData());setSaved(true);setTimeout(()=>setSaved(false),1500)};
-  const handlePlay=()=>{onSave(getData());onPlay(getData())};
+  const handleSave=()=>{
+    const data=getData();
+    addSnapshot(data,"save");
+    onSave(data);setSaved(true);setTimeout(()=>setSaved(false),1500);
+  };
+  const handlePlay=()=>{const data=getData();addSnapshot(data,"save");onSave(data);onPlay(data)};
+
+  // Capture an initial snapshot of the game-as-loaded so we have a pre-edit recovery point,
+  // then offer a JSON backup if the user has opted in.
+  useEffect(()=>{
+    addSnapshot(game,"load");
+    const pref=getBackupPref();
+    if(pref==="always"){
+      downloadJsonBackup(game,"on-load");
+    }else if(pref==="ask"){
+      // Defer to avoid blocking initial render; tiny delay lets editor mount first.
+      const timer=setTimeout(()=>{
+        const choice=window.prompt(
+          `📦 Auto-backup: Download a JSON backup of "${game.name||"this quiz"}" now?\n\nThis is a safety net — your local recovery history also captures changes automatically.\n\nType:\n  yes  →  download now and ask next time\n  always  →  always download from now on (no more prompts)\n  never  →  never download (no more prompts)\n  no  →  skip this time, ask next time`,
+          "yes"
+        );
+        if(choice==null)return;
+        const c=choice.trim().toLowerCase();
+        if(c==="yes"){downloadJsonBackup(game,"on-load")}
+        else if(c==="always"){setBackupPref("always");downloadJsonBackup(game,"on-load")}
+        else if(c==="never"){setBackupPref("never")}
+      },1500);
+      return()=>clearTimeout(timer);
+    }
+  },[game.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounced autosave snapshot: capture state ~1s after the last edit.
+  useEffect(()=>{
+    const timer=setTimeout(()=>{
+      addSnapshot(getData(),"edit");
+    },1200);
+    return()=>clearTimeout(timer);
+  },[name,cats,grid,cols,rws,timer,theme]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const editBox=editIdx!==null?grid[editIdx]:null;
   const editCat=editBox?cats[editBox.catIdx]||cats[0]:null;
@@ -1865,6 +2187,9 @@ export default function App(){
       getDocs(collection(db,"public")).then(s=>new Set(s.docs.filter(d=>d.data()._ownerId===user.uid).map(d=>d.id))).catch(()=>new Set())
     ]).then(([g,pubs])=>{
       setPublishedIds(pubs);
+      // Stamp the moment we loaded these from cloud, so concurrent-edit detection works
+      const loadedAt=Date.now();
+      g.forEach(game=>{game._localLoadedAt=loadedAt});
       // Merge any localStorage games on first sign-in
       const local=loadGamesLocal();
       if(local.length>0){
@@ -1915,11 +2240,37 @@ export default function App(){
     setGames(p=>[g,...p]);
     if(user)saveGameToDB(user.uid,g);
   });
-  const handleEditorSave=u=>{
-    setGames(p=>p.map(g=>g.id===u.id?u:g));
-    if(user)saveGameToDB(user.uid,u);
+  const handleEditorSave=async u=>{
+    if(user){
+      const ok=await saveGameSafely(user.uid,u);
+      if(!ok)return; // user cancelled the overwrite
+      // Refresh local snapshot of when this game's state matches the cloud
+      const now=Date.now();
+      const stamped={...u,_savedAt:now,_localLoadedAt:now};
+      setGames(p=>p.map(g=>g.id===u.id?stamped:g));
+    }else{
+      setGames(p=>p.map(g=>g.id===u.id?u:g));
+    }
   };
   const handlePlay=d=>{setPlayData(d);setView("play")};
+
+  // Restore a game from a snapshot — write it back to local state and cloud
+  const handleRestore=async restored=>{
+    if(!restored||!restored.id)return;
+    const now=Date.now();
+    const stamped={...restored,_savedAt:now,_localLoadedAt:now};
+    setGames(p=>{
+      const exists=p.some(g=>g.id===stamped.id);
+      return exists?p.map(g=>g.id===stamped.id?stamped:g):[stamped,...p];
+    });
+    if(user){
+      try{await saveGameToDB(user.uid,stamped);
+        addSnapshot(stamped,"save");
+      }catch(e){alert("Failed to save restored version to cloud: "+e.message)}
+    }
+    alert(`✓ Restored "${stamped.name||"quiz"}" from snapshot.`);
+  };
+
   const handleSignOut=async()=>{await signOut(auth);setGames([]);setPublishedIds(new Set());setView("home")};
 
   // Publish/unpublish handlers
@@ -1954,5 +2305,5 @@ export default function App(){
 
   if(view==="editor"&&activeGame)return<Editor game={activeGame} onSave={handleEditorSave} onPlay={handlePlay} onBack={()=>setView("home")}/>;
   if(view==="play"&&playData)return<PlayBoard game={playData} onEdit={()=>setView("editor")} onHome={()=>setView("home")}/>;
-  return<Home games={games} onCreate={handleCreate} onSelect={handleSelect} onDuplicate={handleDuplicate} onDelete={handleDelete} onImport={handleImport} user={user} onSignOut={handleSignOut} publishedIds={publishedIds} onPublish={handlePublish} onUnpublish={handleUnpublish}/>;
+  return<Home games={games} onCreate={handleCreate} onSelect={handleSelect} onDuplicate={handleDuplicate} onDelete={handleDelete} onImport={handleImport} user={user} onSignOut={handleSignOut} publishedIds={publishedIds} onPublish={handlePublish} onUnpublish={handleUnpublish} onRestore={handleRestore}/>;
 }
