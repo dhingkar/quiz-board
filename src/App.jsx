@@ -131,15 +131,9 @@ async function saveGameSafely(userId,game){
           `Saving now will OVERWRITE the cloud version with what's in this tab.\n\n`+
           `Choose:\n`+
           `  OK    → overwrite the cloud (you lose the newer cloud changes)\n`+
-          `  Cancel → keep the cloud as-is (your local changes stay in this tab; consider exporting JSON before deciding)`;
+          `  Cancel → keep the cloud as-is (your local changes stay in this tab; the local snapshot history keeps your work safe)`;
         const proceed=window.confirm(msg);
-        if(!proceed){
-          // Offer to download a JSON snapshot of the in-memory tab so user can decide later
-          if(window.confirm("Download a JSON backup of THIS TAB's version before cancelling? You can re-import it later if you want.")){
-            downloadJsonBackup(game,"unsaved");
-          }
-          return false;
-        }
+        if(!proceed)return false;
       }
     }
   }catch(e){
@@ -495,6 +489,54 @@ function VideoUpload({value,onChange,label,color,borderColor}){
   );
 }
 
+function AudioUpload({value,onChange,label,color,borderColor}){
+  const fileRef=useRef(null);
+  const[uploading,setUploading]=useState(false);
+
+  const handleFile=async(e)=>{
+    const file=e.target.files?.[0];
+    if(!file)return;
+    e.target.value="";
+    const sizeMB=file.size/(1024*1024);
+    if(sizeMB>50){
+      if(!window.confirm(`This audio file is ${sizeMB.toFixed(1)}MB. Larger audio will make your HTML export big. Continue?`))return;
+    }
+    setUploading(true);
+    try{
+      const user=auth.currentUser;
+      if(!user){alert("You must be logged in to upload.");setUploading(false);return}
+      const fileRef2=ref(storage,`users/${user.uid}/audios/${Date.now()}-${file.name}`);
+      await uploadBytes(fileRef2,file);
+      const url=await getDownloadURL(fileRef2);
+      onChange(url);
+    }catch(err){alert("Failed to upload audio: "+err.message)}
+    setUploading(false);
+  };
+
+  return(
+    <div>
+      <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+        <span style={{fontSize:10,fontWeight:700,color:color||"#6c4dcf",textTransform:"uppercase",letterSpacing:1}}>{label||"🎵 Local Audio"}</span>
+        <div style={{flex:1}}/>
+        {uploading&&<span style={{fontSize:10,color:"#6c4dcf",fontWeight:600}}>Uploading…</span>}
+        {value&&!uploading&&<button onClick={()=>onChange("")} style={{background:"none",border:"none",fontSize:11,color:T.danger,cursor:"pointer",fontFamily:T.font,fontWeight:600}}>Remove</button>}
+      </div>
+      <div style={{display:"flex",gap:6}}>
+        <input value={value||""} onChange={e=>onChange(e.target.value)}
+          placeholder="Paste URL or upload .mp3 →" style={{flex:1,padding:"8px 12px",border:`1.5px solid ${borderColor||T.borderLight}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:T.font,color:T.text,background:T.surfaceAlt}}/>
+        <input ref={fileRef} type="file" accept="audio/mp3,audio/mpeg,audio/wav,audio/ogg,audio/m4a,audio/*" style={{display:"none"}} onChange={handleFile}/>
+        <button onClick={()=>fileRef.current?.click()} disabled={uploading} style={{padding:"6px 12px",border:`1.5px solid ${borderColor||T.borderLight}`,borderRadius:8,fontSize:12,fontWeight:600,cursor:uploading?"wait":"pointer",background:T.surface,color:T.textSoft,fontFamily:T.font,whiteSpace:"nowrap",flexShrink:0}}>{uploading?"…":"Upload"}</button>
+      </div>
+      {value&&!uploading&&<div style={{marginTop:6}}>
+        <audio src={value} controls preload="metadata" style={{maxWidth:"100%",borderRadius:8,display:"block"}} onError={e=>{e.target.style.display="none"}}/>
+      </div>}
+      <p style={{fontSize:10,color:T.textMuted,margin:"4px 0 0",lineHeight:1.4}}>
+        On play mode you'll see a "▶ Play Audio" button. The HTML export embeds this audio as base64 so it plays offline.
+      </p>
+    </div>
+  );
+}
+
 /* ═══ BTN ═══ */
 function Btn({children,onClick,variant="default",style={},...props}){
   const base={fontFamily:T.font,fontWeight:600,fontSize:14,cursor:"pointer",borderRadius:50,transition:"all 0.15s",display:"inline-flex",alignItems:"center",gap:6,whiteSpace:"nowrap",border:"none",padding:"10px 22px",lineHeight:1};
@@ -634,18 +676,23 @@ async function fetchImageAsDataUrl(url){
 async function exportGameHTML(game){
   const allImageUrls=[];
   const allVideoUrls=[];
+  const allAudioUrls=[];
   game.boxes.forEach(b=>{
     if(b.imageUrl)allImageUrls.push(b.imageUrl);
     if(b.answerImageUrl)allImageUrls.push(b.answerImageUrl);
     if(b.localVideoUrl)allVideoUrls.push(b.localVideoUrl);
     if(b.localAnswerVideoUrl)allVideoUrls.push(b.localAnswerVideoUrl);
+    if(b.localQuestionAudioUrl)allAudioUrls.push(b.localQuestionAudioUrl);
+    if(b.localAnswerAudioUrl)allAudioUrls.push(b.localAnswerAudioUrl);
   });
   if(game.theme?.bgImageUrl)allImageUrls.push(game.theme.bgImageUrl);
 
   const uniqueImages=[...new Set(allImageUrls)];
   const uniqueVideos=[...new Set(allVideoUrls)];
+  const uniqueAudios=[...new Set(allAudioUrls)];
   const totalImg=uniqueImages.length;
   const totalVid=uniqueVideos.length;
+  const totalAud=uniqueAudios.length;
   const showProgress=(msg)=>{
     let el=document.getElementById("__exportProgress");
     if(!el){
@@ -658,7 +705,8 @@ async function exportGameHTML(game){
   };
   const hideProgress=()=>{const el=document.getElementById("__exportProgress");if(el)el.remove()};
 
-  if(totalImg+totalVid>0)showProgress(`Embedding for offline use… 0/${totalImg+totalVid}`);
+  const totalAll=totalImg+totalVid+totalAud;
+  if(totalAll>0)showProgress(`Embedding for offline use… 0/${totalAll}`);
 
   const urlMap={};
   const failed=[];
@@ -668,7 +716,7 @@ async function exportGameHTML(game){
     urlMap[url]=result;
     if(!result.ok)failed.push(url);
     done++;
-    showProgress(`Embedding images… ${done}/${totalImg}${totalVid>0?` (then ${totalVid} videos)`:""}`);
+    showProgress(`Embedding images… ${done}/${totalImg}${totalVid+totalAud>0?` (then ${totalVid} videos, ${totalAud} audio)`:""}`);
   }
   // Videos can be large — fetchImageAsDataUrl's Method 1 (direct fetch) works for any binary
   let vDone=0;
@@ -679,6 +727,15 @@ async function exportGameHTML(game){
     if(!result.ok)failed.push(url);
     vDone++;
   }
+  // Audio
+  let aDone=0;
+  for(const url of uniqueAudios){
+    showProgress(`Embedding audio ${aDone+1}/${totalAud}…`);
+    const result=await fetchImageAsDataUrl(url);
+    urlMap[url]=result;
+    if(!result.ok)failed.push(url);
+    aDone++;
+  }
 
   // Clone game with embedded media
   const embeddedGame=JSON.parse(JSON.stringify(game));
@@ -687,6 +744,8 @@ async function exportGameHTML(game){
     if(b.answerImageUrl&&urlMap[b.answerImageUrl])b.answerImageUrl=urlMap[b.answerImageUrl].data;
     if(b.localVideoUrl&&urlMap[b.localVideoUrl])b.localVideoUrl=urlMap[b.localVideoUrl].data;
     if(b.localAnswerVideoUrl&&urlMap[b.localAnswerVideoUrl])b.localAnswerVideoUrl=urlMap[b.localAnswerVideoUrl].data;
+    if(b.localQuestionAudioUrl&&urlMap[b.localQuestionAudioUrl])b.localQuestionAudioUrl=urlMap[b.localQuestionAudioUrl].data;
+    if(b.localAnswerAudioUrl&&urlMap[b.localAnswerAudioUrl])b.localAnswerAudioUrl=urlMap[b.localAnswerAudioUrl].data;
   });
   if(embeddedGame.theme?.bgImageUrl&&urlMap[embeddedGame.theme.bgImageUrl]){
     embeddedGame.theme.bgImageUrl=urlMap[embeddedGame.theme.bgImageUrl].data;
@@ -695,7 +754,7 @@ async function exportGameHTML(game){
   hideProgress();
 
   if(failed.length>0){
-    const msg=`⚠️ ${failed.length} of ${totalImg+totalVid} media file(s) could not be embedded and will still use URLs (requires internet to load).\n\nThis is usually caused by Firebase Storage CORS. Go to Firebase Console → Storage → Rules tab → check that "read" is public, OR run:\n\ngsutil cors set cors.json gs://quiz-board-claude.firebasestorage.app\n\n(where cors.json allows GET from all origins)\n\nExport the HTML anyway?`;
+    const msg=`⚠️ ${failed.length} of ${totalAll} media file(s) could not be embedded and will still use URLs (requires internet to load).\n\nThis is usually caused by Firebase Storage CORS. Go to Firebase Console → Storage → Rules tab → check that "read" is public, OR run:\n\ngsutil cors set cors.json gs://quiz-board-claude.firebasestorage.app\n\n(where cors.json allows GET from all origins)\n\nExport the HTML anyway?`;
     if(!window.confirm(msg))return;
   }
 
@@ -770,6 +829,8 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 <div id="qMedia" class="media hidden"></div>
 <button id="playVideoBtn" class="reveal-btn hidden" style="background:#6c4dcf14;color:#6c4dcf;border:2px solid #6c4dcf44" onclick="playLocalVideo()">▶ Play Video</button>
 <div id="localVideoBox" class="hidden" style="margin-top:1.5vh;flex-shrink:0;width:100%;display:flex;justify-content:center"></div>
+<button id="playQAudioBtn" class="reveal-btn hidden" style="background:#6c4dcf14;color:#6c4dcf;border:2px solid #6c4dcf44;margin-top:1.2vh" onclick="playQAudio()">▶ Play Audio</button>
+<div id="qAudioBox" class="hidden" style="margin-top:1.2vh;flex-shrink:0;width:100%;display:flex;justify-content:center"></div>
 <div id="qTimer" class="timer-bar hidden"><div class="timer-track"><div class="timer-fill" id="timerFill"></div></div><span id="timerText" style="font-family:monospace;font-weight:700;font-size:clamp(1rem,2.5vh,1.6rem);min-width:50px;text-align:right"></span></div>
 <button id="revealBtn" class="reveal-btn hidden" onclick="revealAnswer()">Reveal Answer</button>
 <div id="answerBox" class="answer-box hidden"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#04a87e;margin-bottom:4px">Answer</div><div class="fittext" id="aFit" style="max-height:15vh"><div class="fittext-inner" id="aText"></div></div></div>
@@ -785,6 +846,8 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 <div id="aImg2" style="margin-top:1.5vh;flex-shrink:0;max-height:40vh;overflow:hidden"></div>
 <button id="playAVideoBtn" class="reveal-btn hidden" style="background:#04a87e14;color:#04a87e;border:2px solid #04a87e44;margin-top:1.5vh" onclick="playAVideo()">▶ Play Answer Video</button>
 <div id="aVideoBox" class="hidden" style="margin-top:1.5vh;flex-shrink:0;width:100%;display:flex;justify-content:center"></div>
+<button id="playAAudioBtn" class="reveal-btn hidden" style="background:#04a87e14;color:#04a87e;border:2px solid #04a87e44;margin-top:1.5vh" onclick="playAAudio()">▶ Play Answer Audio</button>
+<div id="aAudioBox" class="hidden" style="margin-top:1.5vh;flex-shrink:0;width:100%;display:flex;justify-content:center"></div>
 </div></div>
 <div class="q-btns"><button class="pill" style="font-size:14px;padding:10px 28px" onclick="backToQ()">← Back to Question</button></div>
 </div>
@@ -886,11 +949,16 @@ const vid=yid(box.videoUrl);if(vid){const w=document.createElement("div");w.clas
 const pvb=document.getElementById("playVideoBtn"),lvb=document.getElementById("localVideoBox");
 lvb.innerHTML="";lvb.classList.add("hidden");
 if(box.localVideoUrl){pvb.classList.remove("hidden")}else{pvb.classList.add("hidden")}
+// Local question audio: show Play Audio button (or hide), reset player
+const pqab=document.getElementById("playQAudioBtn"),qab=document.getElementById("qAudioBox");
+qab.innerHTML="";qab.classList.add("hidden");
+if(box.localQuestionAudioUrl){pqab.classList.remove("hidden")}else{pqab.classList.add("hidden")}
 const rb=document.getElementById("revealBtn"),ab=document.getElementById("answerBox");
-const hasA=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim())||(box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim());
+const hasA=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim())||(box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim())||(box.localAnswerAudioUrl&&box.localAnswerAudioUrl.trim());
 const hasAImg=box.answerImageUrl&&box.answerImageUrl.trim();
 const hasAVid=box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim();
-if(hasA){rb.classList.remove("hidden");rb.style.background=cat.color+"14";rb.style.color=cat.color;rb.style.border="2px solid "+cat.color+"44";rb.textContent=(hasAImg||hasAVid)?"Reveal Answer →":"Reveal Answer"}else{rb.classList.add("hidden")}
+const hasAAud=box.localAnswerAudioUrl&&box.localAnswerAudioUrl.trim();
+if(hasA){rb.classList.remove("hidden");rb.style.background=cat.color+"14";rb.style.color=cat.color;rb.style.border="2px solid "+cat.color+"44";rb.textContent=(hasAImg||hasAVid||hasAAud)?"Reveal Answer →":"Reveal Answer"}else{rb.classList.add("hidden")}
 ab.classList.add("hidden");
 const aTextEl=document.getElementById("aText");aTextEl.innerHTML=box.answer||"";applyStyle(aTextEl,box,"answer");
 document.getElementById("gridPage").classList.add("hidden");document.getElementById("qPage").classList.remove("hidden");document.getElementById("answerPage").classList.add("hidden");
@@ -921,21 +989,46 @@ function playAVideo(){
   lvb.appendChild(v);
   lvb.classList.remove("hidden");
 }
+function playQAudio(){
+  if(curIdx==null)return;
+  const box=boxes[curIdx];if(!box.localQuestionAudioUrl)return;
+  const pab=document.getElementById("playQAudioBtn"),ab=document.getElementById("qAudioBox");
+  pab.classList.add("hidden");
+  ab.innerHTML="";
+  const a=document.createElement("audio");
+  a.src=box.localQuestionAudioUrl;a.controls=true;a.autoplay=true;
+  a.style.cssText="width:100%;max-width:600px";
+  ab.appendChild(a);
+  ab.classList.remove("hidden");
+}
+function playAAudio(){
+  if(curIdx==null)return;
+  const box=boxes[curIdx];if(!box.localAnswerAudioUrl)return;
+  const pab=document.getElementById("playAAudioBtn"),ab=document.getElementById("aAudioBox");
+  pab.classList.add("hidden");
+  ab.innerHTML="";
+  const a=document.createElement("audio");
+  a.src=box.localAnswerAudioUrl;a.controls=true;a.autoplay=true;
+  a.style.cssText="width:100%;max-width:600px";
+  ab.appendChild(a);
+  ab.classList.remove("hidden");
+}
 function stopLocalVideo(){
-  ["localVideoBox","aVideoBox"].forEach(id=>{
-    const lvb=document.getElementById(id);
-    if(!lvb)return;
-    const vids=lvb.querySelectorAll("video");
-    vids.forEach(v=>{try{v.pause()}catch(e){}});
-    lvb.innerHTML="";lvb.classList.add("hidden");
+  ["localVideoBox","aVideoBox","qAudioBox","aAudioBox"].forEach(id=>{
+    const box=document.getElementById(id);
+    if(!box)return;
+    const media=box.querySelectorAll("video, audio");
+    media.forEach(m=>{try{m.pause()}catch(e){}});
+    box.innerHTML="";box.classList.add("hidden");
   });
 }
 function revealAnswer(){
 const box=boxes[curIdx],cat=cats[box.catIdx]||{name:"?",color:"#999"};
 const hasAImg=box.answerImageUrl&&box.answerImageUrl.trim();
 const hasAVid=box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim();
+const hasAAud=box.localAnswerAudioUrl&&box.localAnswerAudioUrl.trim();
 stopLocalVideo();
-if(hasAImg||hasAVid){document.getElementById("aCat2").textContent=cat.name+" — Answer";
+if(hasAImg||hasAVid||hasAAud){document.getElementById("aCat2").textContent=cat.name+" — Answer";
 const aTextEl2=document.getElementById("aText2");aTextEl2.innerHTML=box.answer||"";applyStyle(aTextEl2,box,"answer");
 const c=document.getElementById("aImg2");c.innerHTML="";
 if(hasAImg){const img=document.createElement("img");img.src=box.answerImageUrl;img.style.cssText="max-width:100%;max-height:40vh;border-radius:12px;object-fit:contain;border:1px solid #04a87e44;cursor:zoom-in";img.onclick=()=>openLightbox(box.answerImageUrl);img.onerror=()=>img.style.display="none";c.appendChild(img)}
@@ -943,6 +1036,10 @@ if(hasAImg){const img=document.createElement("img");img.src=box.answerImageUrl;i
 const pavb=document.getElementById("playAVideoBtn"),avb=document.getElementById("aVideoBox");
 avb.innerHTML="";avb.classList.add("hidden");
 if(hasAVid){pavb.classList.remove("hidden")}else{pavb.classList.add("hidden")}
+// Answer audio: show Play button, reset player
+const paab=document.getElementById("playAAudioBtn"),aab=document.getElementById("aAudioBox");
+aab.innerHTML="";aab.classList.add("hidden");
+if(hasAAud){paab.classList.remove("hidden")}else{paab.classList.add("hidden")}
 document.getElementById("qPage").classList.add("hidden");document.getElementById("answerPage").classList.remove("hidden");
 onAnswerPage=true;setTimeout(()=>{fitText("aFit2","aText2",80,14)},50);history.pushState({v:"a"},"")
 }else{document.getElementById("revealBtn").classList.add("hidden");document.getElementById("answerBox").classList.remove("hidden");
@@ -1039,10 +1136,7 @@ function RecoveryDialog({games,onClose,onRestore}){
       // Clear stamps so safe-save sees this as a fresh load
       delete parsed._savedAt;
       delete parsed._localLoadedAt;
-      if(!window.confirm(`Restore "${parsed.name}" from ${fmtTime(selected.ts)}?\n\nThis will OVERWRITE your current cloud copy of this game.\n\nA backup of the current state will be downloaded as JSON first.`))return;
-      // Save the current version of this game to disk as a safety net
-      const currentGame=games.find(g=>g.id===parsed.id);
-      if(currentGame){downloadJsonBackup(currentGame,"before-restore")}
+      if(!window.confirm(`Restore "${parsed.name}" from ${fmtTime(selected.ts)}?\n\nThis will OVERWRITE your current cloud copy of this game. The current state stays in the local snapshot history (you can roll back from here if needed).`))return;
       onRestore(parsed);
       onClose();
     }catch(e){alert("Failed to restore: "+e.message)}
@@ -1172,7 +1266,7 @@ function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport,user,onSign
       </div>}
 
       {games.length===0?(<div style={{textAlign:"center",padding:"80px 20px",background:T.surface,borderRadius:T.radius,border:`1.5px dashed ${T.border}`}}><div style={{fontSize:48,marginBottom:12}}>🎯</div><p style={{fontSize:20,fontWeight:700,color:T.text,margin:0}}>No games yet</p><p style={{color:T.textMuted,fontSize:14,marginTop:6}}>Create your first quiz game to get started</p><Btn variant="primary" onClick={onCreate} style={{marginTop:16}}>+ New Game</Btn></div>):(
-        <div style={{display:"flex",flexDirection:"column",gap:12}}>{games.map(g=>{
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>{[...games].sort((a,b)=>(b._savedAt||0)-(a._savedAt||0)).map(g=>{
           const isPublished=publishedIds?.has(g.id);
           return(<div key={g.id} style={{background:T.surface,borderRadius:T.radius,border:`1px solid ${T.border}`,overflow:"hidden"}}>
             <div style={{padding:"20px 24px 14px",cursor:"pointer"}} onClick={()=>onSelect(g.id,"edit")}>
@@ -1181,7 +1275,7 @@ function Home({games,onCreate,onSelect,onDuplicate,onDelete,onImport,user,onSign
                 {isPublished&&<span style={{fontSize:10,fontWeight:700,color:T.success,background:T.success+"14",padding:"3px 8px",borderRadius:20,letterSpacing:.5,textTransform:"uppercase"}}>🌐 Public</span>}
               </div>
               <h3 style={{fontSize:18,fontWeight:700,color:T.text,margin:0}}>{g.name}</h3>
-              <p style={{fontSize:13,color:T.textMuted,marginTop:4,fontFamily:T.fontMono}}>{g.columns}×{g.rows} · {g.categories.length} cat · {g.boxes.length} Q{g.timerSeconds?` · ${g.timerSeconds}s timer`:""}</p>
+              <p style={{fontSize:13,color:T.textMuted,marginTop:4,fontFamily:T.fontMono}}>{g.columns}×{g.rows} · {g.categories.length} cat · {g.boxes.length} Q{g.timerSeconds?` · ${g.timerSeconds}s timer`:""}{g._savedAt?` · edited ${(()=>{const m=Math.floor((Date.now()-g._savedAt)/60000);if(m<1)return"just now";if(m<60)return m+"m ago";const h=Math.floor(m/60);if(h<24)return h+"h ago";const d=Math.floor(h/24);if(d<30)return d+"d ago";return new Date(g._savedAt).toLocaleDateString()})()}`:""}</p>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:4,padding:"8px 16px 14px",borderTop:`1px solid ${T.borderLight}`,flexWrap:"wrap"}}>
               <Btn variant="primary" onClick={()=>onSelect(g.id,"play")} style={{fontSize:13,padding:"8px 20px"}}>▶ Play</Btn>
@@ -1487,28 +1581,9 @@ function Editor({game,onSave,onPlay,onBack}){
   };
   const handlePlay=()=>{const data=getData();addSnapshot(data,"save");onSave(data);onPlay(data)};
 
-  // Capture an initial snapshot of the game-as-loaded so we have a pre-edit recovery point,
-  // then offer a JSON backup if the user has opted in.
+  // Capture an initial snapshot of the game-as-loaded so we have a pre-edit recovery point.
   useEffect(()=>{
     addSnapshot(game,"load");
-    const pref=getBackupPref();
-    if(pref==="always"){
-      downloadJsonBackup(game,"on-load");
-    }else if(pref==="ask"){
-      // Defer to avoid blocking initial render; tiny delay lets editor mount first.
-      const timer=setTimeout(()=>{
-        const choice=window.prompt(
-          `📦 Auto-backup: Download a JSON backup of "${game.name||"this quiz"}" now?\n\nThis is a safety net — your local recovery history also captures changes automatically.\n\nType:\n  yes  →  download now and ask next time\n  always  →  always download from now on (no more prompts)\n  never  →  never download (no more prompts)\n  no  →  skip this time, ask next time`,
-          "yes"
-        );
-        if(choice==null)return;
-        const c=choice.trim().toLowerCase();
-        if(c==="yes"){downloadJsonBackup(game,"on-load")}
-        else if(c==="always"){setBackupPref("always");downloadJsonBackup(game,"on-load")}
-        else if(c==="never"){setBackupPref("never")}
-      },1500);
-      return()=>clearTimeout(timer);
-    }
   },[game.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced autosave snapshot: capture state ~1s after the last edit.
@@ -1527,7 +1602,7 @@ function Editor({game,onSave,onPlay,onBack}){
   // Drag state
   const[dragIdx,setDragIdx]=useState(null);
 
-  const cellFilled=b=>b&&(b.question||b.subtitle||b.answer||b.imageUrl||b.videoUrl||b.localVideoUrl||b.answerImageUrl||b.localAnswerVideoUrl);
+  const cellFilled=b=>b&&(b.question||b.subtitle||b.answer||b.imageUrl||b.videoUrl||b.localVideoUrl||b.localQuestionAudioUrl||b.answerImageUrl||b.localAnswerVideoUrl||b.localAnswerAudioUrl);
 
   return(<div style={{minHeight:"100vh",background:T.bg,fontFamily:T.font,display:"flex",flexDirection:"column",position:"relative"}}>
     {/* Background image/color — sits behind ALL editor UI */}
@@ -1632,6 +1707,7 @@ function Editor({game,onSave,onPlay,onBack}){
               {filled&&<div style={{position:"absolute",top:6,right:6,width:7,height:7,borderRadius:4,background:T.success}}/>}
               {(box.imageUrl||box.answerImageUrl)&&<div style={{position:"absolute",bottom:6,right:6,fontSize:10,color:T.textMuted}}>🖼</div>}
               {(box.localVideoUrl||box.localAnswerVideoUrl)&&<div style={{position:"absolute",bottom:6,left:10,fontSize:10,color:T.textMuted}}>🎬</div>}
+              {(box.localQuestionAudioUrl||box.localAnswerAudioUrl)&&<div style={{position:"absolute",top:6,right:6,fontSize:10,color:T.textMuted}}>🎵</div>}
               {(box.bgOverride||box.borderOverride||box.cellOpacity!=null)&&<div style={{position:"absolute",top:6,left:10,fontSize:9,color:T.textMuted}}>🎨</div>}
             </div>);
           })}
@@ -1692,9 +1768,13 @@ function Editor({game,onSave,onPlay,onBack}){
 
         <VideoUpload value={editBox.localVideoUrl||""} onChange={v=>updateCell(editIdx,"localVideoUrl",v)} label="🎬 Question Video (offline-ready)" color="#6c4dcf"/>
 
+        <AudioUpload value={editBox.localQuestionAudioUrl||""} onChange={v=>updateCell(editIdx,"localQuestionAudioUrl",v)} label="🎵 Question Audio (offline-ready)" color="#6c4dcf"/>
+
         <ImageUpload value={editBox.answerImageUrl||""} onChange={v=>updateCell(editIdx,"answerImageUrl",v)} label="🖼 Answer Image" color={T.success} borderColor={T.success+"44"}/>
 
         <VideoUpload value={editBox.localAnswerVideoUrl||""} onChange={v=>updateCell(editIdx,"localAnswerVideoUrl",v)} label="🎬 Answer Video (offline-ready)" color={T.success} borderColor={T.success+"44"}/>
+
+        <AudioUpload value={editBox.localAnswerAudioUrl||""} onChange={v=>updateCell(editIdx,"localAnswerAudioUrl",v)} label="🎵 Answer Audio (offline-ready)" color={T.success} borderColor={T.success+"44"}/>
 
         {/* Per-cell color overrides */}
         <div style={{marginTop:6,paddingTop:10,borderTop:`1px solid ${T.borderLight}`}}>
@@ -1826,13 +1906,15 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   const[hoveredPos,setHoveredPos]=useState(null);
   const[showVideoQ,setShowVideoQ]=useState(false);
   const[showVideoA,setShowVideoA]=useState(false);
+  const[showAudioQ,setShowAudioQ]=useState(false);
+  const[showAudioA,setShowAudioA]=useState(false);
 
   const cfv=Math.min(2.8,15/rows),sfv=Math.min(2,10/rows);
   const total=columns*rows;
   const strike={textDecoration:"line-through",textDecorationColor:"#c43040",textDecorationThickness:"2.5px"};
 
   const unvisit=i=>{setVisited(p=>{const n={...p};delete n[i];return n})};
-  const reset=()=>{setVisited({});setActiveIdx(null);setShowAnswer(false);setShowVideoQ(false);setShowVideoA(false);setOrder(boxes.map((_,i)=>i))};
+  const reset=()=>{setVisited({});setActiveIdx(null);setShowAnswer(false);setShowVideoQ(false);setShowVideoA(false);setShowAudioQ(false);setShowAudioA(false);setOrder(boxes.map((_,i)=>i))};
   const doScramble=useCallback(()=>setOrder(p=>shuffle(p)),[]);
   const toggleFS=()=>{if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen()};
 
@@ -1840,8 +1922,8 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   useEffect(()=>{
     const onPop=()=>{
       if(activeIdx!==null){
-        if(showAnswer){setShowAnswer(false);setShowVideoA(false)}
-        else{setActiveIdx(null);setShowAnswer(false);setShowVideoQ(false);setShowVideoA(false)}
+        if(showAnswer){setShowAnswer(false);setShowVideoA(false);setShowAudioA(false)}
+        else{setActiveIdx(null);setShowAnswer(false);setShowVideoQ(false);setShowVideoA(false);setShowAudioQ(false);setShowAudioA(false)}
       }
     };
     window.addEventListener("popstate",onPop);
@@ -1849,16 +1931,16 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   },[activeIdx,showAnswer]);
 
   const openQuestion=i=>{
-    setVisited(p=>({...p,[i]:true}));setActiveIdx(i);setShowAnswer(false);setShowVideoQ(false);setShowVideoA(false);
+    setVisited(p=>({...p,[i]:true}));setActiveIdx(i);setShowAnswer(false);setShowVideoQ(false);setShowVideoA(false);setShowAudioQ(false);setShowAudioA(false);
     window.history.pushState({view:"question"},"");
   };
   const revealAns=()=>{
-    setShowAnswer(true);setShowVideoQ(false);setShowVideoA(false);
+    setShowAnswer(true);setShowVideoQ(false);setShowVideoA(false);setShowAudioQ(false);setShowAudioA(false);
     window.history.pushState({view:"answer"},"");
   };
   const goBack=()=>{
-    if(showAnswer){setShowAnswer(false);setShowVideoA(false)}
-    else{setActiveIdx(null);setShowAnswer(false);setShowVideoQ(false);setShowVideoA(false)}
+    if(showAnswer){setShowAnswer(false);setShowVideoA(false);setShowAudioA(false)}
+    else{setActiveIdx(null);setShowAnswer(false);setShowVideoQ(false);setShowVideoA(false);setShowAudioQ(false);setShowAudioA(false)}
   };
 
   useEffect(()=>{
@@ -1879,6 +1961,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
     const box=boxes[activeIdx];const cat=categories[box.catIdx]||{name:"?",color:"#999"};
     const hasImg=box.answerImageUrl&&box.answerImageUrl.trim();
     const hasVid=box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim();
+    const hasAud=box.localAnswerAudioUrl&&box.localAnswerAudioUrl.trim();
     const aStyle=resolveTextStyle(box,theme,"answer");
 
     if(autoFit){
@@ -1892,6 +1975,8 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
               {hasImg&&<img src={box.answerImageUrl} alt="" onClick={()=>setLightboxSrc(box.answerImageUrl)} style={{maxWidth:"100%",flex:"0 1 auto",maxHeight:"35vh",borderRadius:12,objectFit:"contain",marginTop:"1.5vh",border:`1px solid ${T.success}44`,cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/>}
               {hasVid&&showVideoA&&<video src={box.localAnswerVideoUrl} controls autoPlay style={{maxWidth:"100%",flex:"0 1 auto",maxHeight:"35vh",borderRadius:12,marginTop:"1.5vh"}}/>}
               {hasVid&&!showVideoA&&<button onClick={()=>setShowVideoA(true)} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:T.success+"14",color:T.success,border:`2px solid ${T.success}44`,borderRadius:50,flexShrink:0}}>▶ Play Answer Video</button>}
+              {hasAud&&showAudioA&&<audio src={box.localAnswerAudioUrl} controls autoPlay style={{maxWidth:"100%",marginTop:"1.5vh"}}/>}
+              {hasAud&&!showAudioA&&<button onClick={()=>setShowAudioA(true)} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:T.success+"14",color:T.success,border:`2px solid ${T.success}44`,borderRadius:50,flexShrink:0}}>▶ Play Answer Audio</button>}
             </div>
           </div>
           <div style={{display:"flex",justifyContent:"center",gap:12,flexShrink:0,paddingTop:"0.8vh"}}><Btn onClick={goBack} style={{fontSize:14,padding:"10px 28px"}}>← Back to Question</Btn></div>
@@ -1909,6 +1994,8 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           {hasImg&&<div style={{marginTop:"2vh"}}><img src={box.answerImageUrl} alt="" onClick={()=>setLightboxSrc(box.answerImageUrl)} style={{maxWidth:"100%",maxHeight:"50vh",borderRadius:12,objectFit:"contain",border:`1px solid ${T.success}44`,cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/></div>}
           {hasVid&&showVideoA&&<div style={{marginTop:"2vh",display:"flex",justifyContent:"center"}}><video src={box.localAnswerVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"50vh",borderRadius:12,boxShadow:"0 4px 20px rgba(0,0,0,.1)"}}/></div>}
           {hasVid&&!showVideoA&&<button onClick={()=>setShowVideoA(true)} style={{marginTop:"2vh",padding:"12px 32px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:T.success+"14",color:T.success,border:`2px solid ${T.success}44`,borderRadius:50,transition:"all .15s"}}>▶ Play Answer Video</button>}
+          {hasAud&&showAudioA&&<div style={{marginTop:"2vh",display:"flex",justifyContent:"center"}}><audio src={box.localAnswerAudioUrl} controls autoPlay style={{maxWidth:"100%",width:"100%",maxWidth:600}}/></div>}
+          {hasAud&&!showAudioA&&<button onClick={()=>setShowAudioA(true)} style={{marginTop:"2vh",padding:"12px 32px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:T.success+"14",color:T.success,border:`2px solid ${T.success}44`,borderRadius:50,transition:"all .15s"}}>▶ Play Answer Audio</button>}
         </div>
         <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><Btn onClick={goBack} style={{fontSize:15,padding:"12px 32px"}}>← Back to Question</Btn></div>
       </div>
@@ -1918,13 +2005,15 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   // ─── QUESTION PAGE ───
   if(activeIdx!==null&&activeIdx<boxes.length){
     const box=boxes[activeIdx];const cat=categories[box.catIdx]||{name:"?",color:"#999"};
-    const hasAnswer=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim())||(box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim());
+    const hasAnswer=(box.answer&&box.answer.trim())||(box.answerImageUrl&&box.answerImageUrl.trim())||(box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim())||(box.localAnswerAudioUrl&&box.localAnswerAudioUrl.trim());
     const hasAnswerImg=box.answerImageUrl&&box.answerImageUrl.trim();
     const hasAnswerVid=box.localAnswerVideoUrl&&box.localAnswerVideoUrl.trim();
-    const hasAnswerMedia=hasAnswerImg||hasAnswerVid;
+    const hasAnswerAud=box.localAnswerAudioUrl&&box.localAnswerAudioUrl.trim();
+    const hasAnswerMedia=hasAnswerImg||hasAnswerVid||hasAnswerAud;
+    const hasQAud=box.localQuestionAudioUrl&&box.localQuestionAudioUrl.trim();
     const qStyle=resolveTextStyle(box,theme,"question");
     const aStyleInline=resolveTextStyle(box,theme,"answer");
-    // If answer has image → reveal goes to separate page. If no image → inline reveal.
+    // If answer has image/video/audio → reveal goes to separate page. Otherwise inline reveal.
 
     if(autoFit){
       return(<>
@@ -1941,6 +2030,8 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
                 {box.localVideoUrl&&showVideoQ&&<video src={box.localVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"30vh",borderRadius:10}}/>}
               </div>}
               {box.localVideoUrl&&!showVideoQ&&<button onClick={()=>setShowVideoQ(true)} style={{marginTop:"1.2vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,flexShrink:0}}>▶ Play Video</button>}
+              {hasQAud&&showAudioQ&&<audio src={box.localQuestionAudioUrl} controls autoPlay style={{maxWidth:"100%",marginTop:"1.2vh",flexShrink:0}}/>}
+              {hasQAud&&!showAudioQ&&<button onClick={()=>setShowAudioQ(true)} style={{marginTop:"1.2vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,flexShrink:0}}>▶ Play Audio</button>}
               {(timerSeconds||0)>0&&<div style={{flexShrink:0,width:"100%"}}><Timer seconds={timerSeconds}/></div>}
               {hasAnswer&&!hasAnswerMedia&&!showAnswer&&<button onClick={revealAns} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,flexShrink:0}}>Reveal Answer</button>}
               {hasAnswer&&hasAnswerMedia&&<button onClick={revealAns} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,flexShrink:0}}>Reveal Answer →</button>}
@@ -1968,6 +2059,10 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
             <video src={box.localVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"45vh",borderRadius:12,boxShadow:"0 4px 20px rgba(0,0,0,.1)"}}/>
           </div>}
           {box.localVideoUrl&&!showVideoQ&&<button onClick={()=>setShowVideoQ(true)} style={{marginTop:"2vh",padding:"12px 32px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,transition:"all .15s"}}>▶ Play Video</button>}
+          {hasQAud&&showAudioQ&&<div style={{marginTop:"2vh",display:"flex",justifyContent:"center"}}>
+            <audio src={box.localQuestionAudioUrl} controls autoPlay style={{width:"100%",maxWidth:600}}/>
+          </div>}
+          {hasQAud&&!showAudioQ&&<button onClick={()=>setShowAudioQ(true)} style={{marginTop:"2vh",padding:"12px 32px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,transition:"all .15s"}}>▶ Play Audio</button>}
           {(timerSeconds||0)>0&&<Timer seconds={timerSeconds}/>}
           {hasAnswer&&!hasAnswerMedia&&!showAnswer&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer</button>}
           {hasAnswer&&hasAnswerMedia&&<button onClick={revealAns} style={{marginTop:"3vh",padding:"14px 36px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:cat.color+"14",color:cat.color,border:`2px solid ${cat.color}44`,borderRadius:50,transition:"all .15s"}}>Reveal Answer →</button>}
