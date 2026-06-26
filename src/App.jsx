@@ -52,6 +52,189 @@ function injectFont(fontIds = ["outfit"]) {
   }
 }
 
+/* ═══ THEME PRESETS ═══
+   Each preset is a complete visual identity. Themes set good DEFAULTS;
+   per-cell colors/fonts/per-game cellBg/etc STILL win — themes are non-destructive.
+   Pass 1: modern, editorial, mono. Pass 2 (next conversation): the dramatic ones. */
+const THEME_PRESETS = {
+  modern: {
+    id: "modern",
+    name: "Modern",
+    description: "Clean, minimal, soft. The polished default.",
+    googleFonts: ["Outfit:wght@400;500;700;800;900"],
+    page: { bg: "#f4f3f0" },
+    cell: {
+      fill: "#ffffff",
+      borderColor: "#e6e4df",
+      borderWidth: 1,
+      borderStyle: "solid",
+      radius: 10,
+      leftStripe: 4,
+      shadow: "0 1px 3px rgba(0,0,0,.04)",
+      hoverShadow: (catColor) => `0 10px 28px ${catColor}44`,
+      hoverTransform: "translateY(-3px) scale(1.03)",
+    },
+    category: {
+      fontFamily: "'Outfit',sans-serif",
+      fontWeight: 800,
+      textTransform: "uppercase",
+      letterSpacing: "1px",
+    },
+    subtitle: {
+      fontFamily: "'Outfit',sans-serif",
+      fontWeight: 500,
+      color: "#78716c",
+      prefix: "",
+      suffix: "",
+    },
+    question: {
+      cardBg: "#ffffff",
+      cardBorder: "1px solid #e6e4df",
+      cardRadius: 24,
+      cardShadow: "0 12px 60px rgba(0,0,0,.06)",
+      cardTopStripe: true,
+    },
+    answer: {
+      cardBg: "#f0faf6",
+      cardBorder: "1.5px solid rgba(4,168,126,.2)",
+      cardRadius: 24,
+      labelColor: "#04a87e",
+    },
+    revealBtn: {
+      bgFn: (catColor) => `${catColor}14`,
+      colorFn: (catColor) => catColor,
+      borderFn: (catColor) => `2px solid ${catColor}44`,
+      radius: 50,
+      letterSpacing: "0",
+      prefix: "",
+    },
+  },
+  editorial: {
+    id: "editorial",
+    name: "Editorial",
+    description: "Cream paper, Playfair serif, hairline borders. Reads like a quiz book.",
+    googleFonts: ["Playfair+Display:ital,wght@0,400;0,500;0,700;1,400;1,700", "Outfit:wght@400;500"],
+    page: { bg: "#f5efe2" },
+    cell: {
+      fill: "#faf6ec",
+      borderColor: "#1c1917",
+      borderWidth: 0.5,
+      borderStyle: "solid",
+      radius: 4,
+      leftStripe: 0,
+      shadow: "1.5px 1.5px 0 #1c1917",
+      hoverShadow: () => "3px 3px 0 #1c1917",
+      hoverTransform: "translate(-1.5px, -1.5px)",
+    },
+    category: {
+      fontFamily: "'Playfair Display',serif",
+      fontWeight: 700,
+      textTransform: "none",
+      letterSpacing: "0.5px",
+    },
+    subtitle: {
+      fontFamily: "'Playfair Display',serif",
+      fontWeight: 400,
+      fontStyle: "italic",
+      color: "#6b5d3e",
+      prefix: "№ ",
+      suffix: "",
+    },
+    question: {
+      cardBg: "#faf6ec",
+      cardBorder: "0.5px solid #1c1917",
+      cardRadius: 4,
+      cardShadow: "3px 3px 0 #1c1917",
+      cardTopStripe: false,
+    },
+    answer: {
+      cardBg: "#f5efe2",
+      cardBorder: "0.5px solid #1c1917",
+      cardRadius: 4,
+      labelColor: "#6b5d3e",
+      labelStyle: "italic",
+    },
+    revealBtn: {
+      bgFn: () => "transparent",
+      colorFn: () => "#1c1917",
+      borderFn: () => "0.5px solid #1c1917",
+      radius: 0,
+      letterSpacing: "1px",
+      prefix: "",
+    },
+  },
+  mono: {
+    id: "mono",
+    name: "Mono",
+    description: "Wireframe, monospace, hairlines, zero shadows. Sophisticated.",
+    googleFonts: ["Space+Mono:wght@400;700", "Outfit:wght@400;500"],
+    page: { bg: "#fafafa" },
+    cell: {
+      fill: "#ffffff",
+      borderColor: "#111111",
+      borderWidth: 1,
+      borderStyle: "solid",
+      radius: 0,
+      leftStripe: 0,
+      shadow: "none",
+      hoverShadow: () => "2px 2px 0 #111111",
+      hoverTransform: "translate(-2px, -2px)",
+    },
+    category: {
+      fontFamily: "'Space Mono',monospace",
+      fontWeight: 700,
+      textTransform: "uppercase",
+      letterSpacing: "1px",
+    },
+    subtitle: {
+      fontFamily: "'Space Mono',monospace",
+      fontWeight: 400,
+      color: "#888888",
+      prefix: "[",
+      suffix: "]",
+    },
+    question: {
+      cardBg: "#ffffff",
+      cardBorder: "1px solid #111111",
+      cardRadius: 0,
+      cardShadow: "4px 4px 0 #111111",
+      cardTopStripe: false,
+    },
+    answer: {
+      cardBg: "#ffffff",
+      cardBorder: "1px solid #111111",
+      cardRadius: 0,
+      labelColor: "#111111",
+    },
+    revealBtn: {
+      bgFn: () => "#111111",
+      colorFn: () => "#ffffff",
+      borderFn: () => "1px solid #111111",
+      radius: 0,
+      letterSpacing: "1px",
+      prefix: "> ",
+    },
+  },
+};
+const THEME_PRESET_ORDER = ["modern", "editorial", "mono"];
+const DEFAULT_THEME_PRESET = "modern";
+function getThemePreset(id) { return THEME_PRESETS[id] || THEME_PRESETS[DEFAULT_THEME_PRESET]; }
+function injectAllThemeFonts() {
+  for (const id of THEME_PRESET_ORDER) {
+    const p = THEME_PRESETS[id];
+    if (!p || !p.googleFonts) continue;
+    for (const spec of p.googleFonts) {
+      const href = `https://fonts.googleapis.com/css2?family=${spec}&display=swap`;
+      if (!document.querySelector(`link[href="${href}"]`)) {
+        const l = document.createElement("link");
+        l.rel = "stylesheet";
+        l.href = href;
+        document.head.appendChild(l);
+      }
+    }
+  }
+}
+
 // Resolve effective font/weight/alignment given per-cell override + theme + defaults
 function resolveTextStyle(box, theme, kind /* "question"|"answer" */) {
   const mode = (theme && theme.typographyMode) || "game";
@@ -266,6 +449,7 @@ function downloadJsonBackup(game,suffix=""){
 
 const DG={name:"Untitled Game",columns:5,rows:5,timerSeconds:0,
   categories:PC.slice(0,5).map((c,i)=>({name:`Category ${i+1}`,color:c})),boxes:[],
+  themePreset:"modern",
   theme:{
     // Background
     bgType:"solid", // "solid" | "gradient" | "image"
@@ -338,6 +522,10 @@ function FormatBar({targetRef}){
       <button style={{...bs,fontStyle:"italic"}} onClick={()=>exec("italic")} title="Italic">I</button>
       <button style={{...bs,textDecoration:"underline"}} onClick={()=>exec("underline")} title="Underline">U</button>
       <button style={{...bs}} onClick={()=>exec("strikeThrough")} title="Strikethrough">S̶</button>
+      <div style={{width:1,background:T.borderLight,margin:"2px 4px",flexShrink:0}}/>
+      <button style={{...bs,fontFamily:"system-ui"}} onClick={()=>exec("justifyLeft")} title="Align left">⇤</button>
+      <button style={{...bs,fontFamily:"system-ui"}} onClick={()=>exec("justifyCenter")} title="Align center">↔</button>
+      <button style={{...bs,fontFamily:"system-ui"}} onClick={()=>exec("justifyRight")} title="Align right">⇥</button>
     </div>
   );
 }
@@ -762,6 +950,8 @@ async function exportGameHTML(game){
 }
 
 function generateHTMLFile(game){
+  // Resolve the active preset for this export
+  const preset=getThemePreset(game.themePreset);
   // Collect all fonts used in this game (theme defaults + per-question overrides)
   const fontIds=new Set();
   const ts=game.theme?.textStyle||{};
@@ -772,13 +962,64 @@ function generateHTMLFile(game){
     if(b.textStyle?.answer?.font)fontIds.add(b.textStyle.answer.font);
   }
   fontIds.add("outfit"); // always include default
-  const fontLinks=[...fontIds].map(id=>{
+  const regFontLinks=[...fontIds].map(id=>{
     const f=FONT_BY_ID[id];
     if(!f||!f.google)return"";
     return`<link href="https://fonts.googleapis.com/css2?family=${f.google}&display=swap" rel="stylesheet">`;
   }).join("\n");
+  // Add the active preset's Google Fonts
+  const presetFontLinks=(preset.googleFonts||[]).map(spec=>
+    `<link href="https://fonts.googleapis.com/css2?family=${spec}&display=swap" rel="stylesheet">`
+  ).join("\n");
+  const fontLinks=regFontLinks+"\n"+presetFontLinks;
   // Build a JS-side font map for runtime use
   const fontMapJs=JSON.stringify(Object.fromEntries(FONTS.map(f=>[f.id,f.family])));
+
+  // Preset CSS — overrides the base styles further down so theme applies
+  const presetCSS=`
+:root{
+  --qb-page-bg:${preset.page.bg};
+  --qb-cell-fill:${preset.cell.fill};
+  --qb-cell-border:${preset.cell.borderColor};
+  --qb-cell-border-width:${preset.cell.borderWidth}px;
+  --qb-cell-border-style:${preset.cell.borderStyle};
+  --qb-cell-radius:${preset.cell.radius}px;
+  --qb-cell-shadow:${preset.cell.shadow};
+  --qb-cat-font:${preset.category.fontFamily};
+  --qb-cat-weight:${preset.category.fontWeight};
+  --qb-cat-transform:${preset.category.textTransform};
+  --qb-cat-spacing:${preset.category.letterSpacing};
+  --qb-sub-font:${preset.subtitle.fontFamily};
+  --qb-sub-weight:${preset.subtitle.fontWeight};
+  --qb-sub-style:${preset.subtitle.fontStyle||"normal"};
+  --qb-sub-color:${preset.subtitle.color};
+  --qb-qcard-bg:${preset.question.cardBg};
+  --qb-qcard-border:${preset.question.cardBorder};
+  --qb-qcard-radius:${preset.question.cardRadius}px;
+  --qb-qcard-shadow:${preset.question.cardShadow||"none"};
+  --qb-acard-bg:${preset.answer.cardBg};
+  --qb-acard-border:${preset.answer.cardBorder};
+  --qb-acard-radius:${preset.answer.cardRadius}px;
+  --qb-a-label-color:${preset.answer.labelColor};
+  --qb-a-label-style:${preset.answer.labelStyle||"normal"};
+  --qb-reveal-radius:${preset.revealBtn.radius}px;
+  --qb-reveal-spacing:${preset.revealBtn.letterSpacing||"0"};
+}
+.page,.qpage{background:var(--qb-page-bg)!important}
+.cell{background:var(--qb-cell-fill);border:var(--qb-cell-border-width) var(--qb-cell-border-style) var(--qb-cell-border);border-radius:var(--qb-cell-radius);box-shadow:var(--qb-cell-shadow)}
+.cell .cat{font-family:var(--qb-cat-font)!important;font-weight:var(--qb-cat-weight)!important;text-transform:var(--qb-cat-transform)!important;letter-spacing:var(--qb-cat-spacing)!important}
+.cell .sub{font-family:var(--qb-sub-font)!important;font-weight:var(--qb-sub-weight)!important;font-style:var(--qb-sub-style)!important;color:var(--qb-sub-color)!important}
+.qcard{background:var(--qb-qcard-bg)!important;border:var(--qb-qcard-border)!important;border-radius:var(--qb-qcard-radius)!important;box-shadow:var(--qb-qcard-shadow)!important}
+.qcard #qCat{font-family:var(--qb-cat-font)!important;font-weight:var(--qb-cat-weight)!important;text-transform:var(--qb-cat-transform)!important;letter-spacing:var(--qb-cat-spacing)!important}
+.qcard #qSub{font-family:var(--qb-sub-font)!important;font-weight:var(--qb-sub-weight)!important;font-style:var(--qb-sub-style)!important;color:var(--qb-sub-color)!important}
+.acard{background:var(--qb-acard-bg)!important;border:var(--qb-acard-border)!important;border-radius:var(--qb-acard-radius)!important}
+.acard #aCat2{font-family:var(--qb-cat-font)!important;font-weight:var(--qb-cat-weight)!important;text-transform:var(--qb-cat-transform)!important;letter-spacing:var(--qb-cat-spacing)!important;color:var(--qb-a-label-color)!important;font-style:var(--qb-a-label-style)!important}
+.answer-box{background:var(--qb-acard-bg)!important;border:var(--qb-acard-border)!important;border-radius:var(--qb-acard-radius)!important}
+.reveal-btn{border-radius:var(--qb-reveal-radius)!important;letter-spacing:var(--qb-reveal-spacing)!important}
+`;
+  // Preset-related JS values
+  const subPrefixJs=JSON.stringify(preset.subtitle.prefix||"");
+  const subSuffixJs=JSON.stringify(preset.subtitle.suffix||"");
 
   const d=JSON.stringify(game).replace(/<\/script>/gi,"<\\/script>");
   const html=`<!DOCTYPE html>
@@ -814,6 +1055,7 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 .hint{color:#a8a29e;font-size:11px;margin-top:6px;text-align:center;flex-shrink:0}
 .fittext{width:100%;overflow:hidden;flex:0 1 auto}
 .fittext-inner{line-height:1.3;color:#1c1917;word-break:break-word}
+${presetCSS}
 </style></head><body>
 <div class="page" id="gridPage">
 <div id="bgLayer" style="position:absolute;inset:0;pointer-events:none;z-index:0"></div>
@@ -860,6 +1102,9 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 const G=${d};
 const cats=G.categories,boxes=G.boxes,COLS=G.columns,ROWS=G.rows,TIMER=G.timerSeconds||0;
 const THEME=G.theme||{};
+const PRESET_LEFT_STRIPE=${preset.cell.leftStripe};
+const PRESET_SUB_PREFIX=${subPrefixJs};
+const PRESET_SUB_SUFFIX=${subSuffixJs};
 const FONT_MAP=${fontMapJs};
 function resolveStyle(box,kind){
   const mode=THEME.typographyMode||"game";
@@ -930,16 +1175,16 @@ if(!visited[idx]){
   if(THEME.cellShadow)d.style.boxShadow="0 4px 12px rgba(0,0,0,.15)";
   d.style.setProperty("--hover-shadow","0 10px 28px "+borderColor+"44");
 }
-d.style.borderLeft="4px solid "+borderColor;
-const c=document.createElement("span");c.style.cssText="font-weight:800;font-size:clamp(0.55rem,"+cfv+"vh,1.8rem);line-height:1.1;letter-spacing:-0.3px;color:"+(visited[idx]?"#999":cat.color);c.textContent=cat.name;
-const s=document.createElement("span");s.style.cssText="font-weight:500;font-size:clamp(0.4rem,"+sfv+"vh,1.1rem);line-height:1.1;color:"+(visited[idx]?"#bbb":"#78716c");s.textContent=box.subtitle;
+d.style.borderLeft=PRESET_LEFT_STRIPE>0?(PRESET_LEFT_STRIPE+"px solid "+borderColor):"";
+const c=document.createElement("span");c.className="cat";c.style.cssText="font-weight:800;font-size:clamp(0.55rem,"+cfv+"vh,1.8rem);line-height:1.1;letter-spacing:-0.3px;color:"+(visited[idx]?"#999":cat.color);c.textContent=cat.name;
+const s=document.createElement("span");s.className="sub";s.style.cssText="font-weight:500;font-size:clamp(0.4rem,"+sfv+"vh,1.1rem);line-height:1.1;color:"+(visited[idx]?"#bbb":"#78716c");s.textContent=PRESET_SUB_PREFIX+(box.subtitle||"")+PRESET_SUB_SUFFIX;
 d.appendChild(c);d.appendChild(s);
 if(!visited[idx])d.addEventListener("click",()=>showQ(idx));
 d.addEventListener("contextmenu",e=>{e.preventDefault();if(visited[idx]){delete visited[idx];buildGrid()}});
 grid.appendChild(d)})}
 function showQ(idx){visited[idx]=true;curIdx=idx;onAnswerPage=false;const box=boxes[idx],cat=cats[box.catIdx]||{name:"?",color:"#999"};
 document.getElementById("qCat").textContent=cat.name;document.getElementById("qCat").style.color=cat.color;
-document.getElementById("qSub").textContent=box.subtitle;
+document.getElementById("qSub").textContent=PRESET_SUB_PREFIX+(box.subtitle||"")+PRESET_SUB_SUFFIX;
 const qTextEl=document.getElementById("qText");qTextEl.innerHTML=box.question||"";applyStyle(qTextEl,box,"question");
 document.getElementById("qCard").style.borderTop="5px solid "+cat.color;
 const media=document.getElementById("qMedia");media.innerHTML="";media.classList.add("hidden");
@@ -1318,7 +1563,7 @@ const GRADIENT_PRESETS=[
   {name:"Peach",c1:"#ffecd2",c2:"#fcb69f",angle:135},
 ];
 
-function ThemePanel({theme,updateTheme}){
+function ThemePanel({theme,updateTheme,themePreset,setThemePreset}){
   const bgType=theme.bgType||"solid";
   const cellType=theme.cellType||"solid";
 
@@ -1340,6 +1585,74 @@ function ThemePanel({theme,updateTheme}){
   const tabBtn=(active)=>({padding:"6px 12px",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",border:"none",background:active?T.text:T.bg,color:active?"#fff":T.textSoft,fontFamily:T.font,transition:"all .1s"});
 
   return(<div style={{padding:"16px 20px",borderBottom:`1px solid ${T.border}`,background:T.surfaceAlt,flexShrink:0,position:"relative",zIndex:2,maxHeight:"60vh",overflowY:"auto"}}>
+
+    {/* ─── PRESET PICKER ─── */}
+    {setThemePreset&&<div style={{marginBottom:20,paddingBottom:16,borderBottom:`1px solid ${T.borderLight}`}}>
+      <div style={{...lbl,marginBottom:10}}>Theme preset</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10}}>
+        {THEME_PRESET_ORDER.map(id=>{
+          const p=THEME_PRESETS[id];
+          const isSelected=themePreset===id;
+          return(<button key={id} onClick={()=>setThemePreset(id)}
+            style={{
+              padding:0,
+              border:isSelected?`2px solid ${T.text}`:`1.5px solid ${T.border}`,
+              borderRadius:12,
+              background:p.page.bg,
+              cursor:"pointer",
+              textAlign:"left",
+              overflow:"hidden",
+              transition:"all .15s",
+              transform:isSelected?"translateY(-1px)":"none",
+              boxShadow:isSelected?"0 6px 16px rgba(0,0,0,.1)":"none",
+              fontFamily:T.font,
+            }}>
+            <div style={{padding:"12px 14px 10px"}}>
+              <div style={{
+                background:p.cell.fill,
+                border:`${p.cell.borderWidth}px ${p.cell.borderStyle} ${p.cell.borderColor}`,
+                borderRadius:p.cell.radius,
+                ...(p.cell.leftStripe?{borderLeft:`${p.cell.leftStripe}px solid #c43040`}:{}),
+                ...(p.cell.shadow!=="none"?{boxShadow:p.cell.shadow}:{}),
+                padding:"8px 10px",
+                minHeight:42,
+                display:"flex",
+                flexDirection:"column",
+                justifyContent:"center",
+                alignItems:"center",
+              }}>
+                <span style={{
+                  fontFamily:p.category.fontFamily,
+                  fontWeight:p.category.fontWeight,
+                  textTransform:p.category.textTransform,
+                  letterSpacing:p.category.letterSpacing,
+                  fontSize:11,
+                  color:"#c43040",
+                  lineHeight:1.1,
+                }}>NAME</span>
+                <span style={{
+                  fontFamily:p.subtitle.fontFamily,
+                  fontWeight:p.subtitle.fontWeight,
+                  fontStyle:p.subtitle.fontStyle||"normal",
+                  fontSize:10,
+                  color:p.subtitle.color,
+                  lineHeight:1.1,
+                  marginTop:1,
+                }}>{p.subtitle.prefix||""}1{p.subtitle.suffix||""}</span>
+              </div>
+            </div>
+            <div style={{padding:"8px 14px 12px",background:T.surface,borderTop:`1px solid ${T.borderLight}`}}>
+              <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:2}}>{p.name}</div>
+              <div style={{fontSize:11,color:T.textSoft,lineHeight:1.35}}>{p.description}</div>
+            </div>
+          </button>);
+        })}
+      </div>
+      <p style={{fontSize:10,color:T.textMuted,marginTop:8,lineHeight:1.4}}>
+        Themes set the visual defaults. Your custom colors / fonts below still override them per-cell or per-game.
+      </p>
+    </div>}
+
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:20}}>
 
       {/* BACKGROUND */}
@@ -1531,6 +1844,7 @@ function Editor({game,onSave,onPlay,onBack}){
   const[rws,setRws]=useState(game.rows);
   const[timer,setTimer]=useState(game.timerSeconds||0);
   const[theme,setTheme]=useState(game.theme||{bgColor:"",bgImageUrl:"",bgOpacity:1,cellBg:"",cellBorder:""});
+  const[themePreset,setThemePreset]=useState(game.themePreset||DEFAULT_THEME_PRESET);
   const[saved,setSaved]=useState(false);
   const[editIdx,setEditIdx]=useState(null); // index of cell being edited
   const[showSettings,setShowSettings]=useState(false);
@@ -1573,7 +1887,7 @@ function Editor({game,onSave,onPlay,onBack}){
   const clearCell=i=>setGrid(p=>p.map((b,j)=>j===i?{catIdx:p[j].catIdx,subtitle:"",question:"",answer:"",imageUrl:"",videoUrl:"",answerImageUrl:""}:b));
   const swapCells=(a,b)=>setGrid(p=>{const n=[...p];[n[a],n[b]]=[n[b],n[a]];return n});
 
-  const getData=()=>({...game,name,categories:cats,boxes:grid.slice(0,cols*rws),columns:cols,rows:rws,timerSeconds:timer,theme});
+  const getData=()=>({...game,name,categories:cats,boxes:grid.slice(0,cols*rws),columns:cols,rows:rws,timerSeconds:timer,theme,themePreset});
   const handleSave=()=>{
     const data=getData();
     addSnapshot(data,"save");
@@ -1660,7 +1974,7 @@ function Editor({game,onSave,onPlay,onBack}){
     </div>}
 
     {/* ─── Theme panel (collapsible) ─── */}
-    {showTheme&&<ThemePanel theme={theme} updateTheme={updateTheme}/>}
+    {showTheme&&<ThemePanel theme={theme} updateTheme={updateTheme} themePreset={themePreset} setThemePreset={setThemePreset}/>}
 
     {/* ─── Category bar ─── */}
     <div style={{padding:"10px 20px",borderBottom:`1px solid ${T.border}`,background:T.surface,display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",flexShrink:0,position:"relative",zIndex:2}}>
@@ -1894,6 +2208,7 @@ function Editor({game,onSave,onPlay,onBack}){
 function PlayBoard({game,onEdit,onHome,guestMode}){
   const{categories,boxes,columns,rows,timerSeconds}=game;
   const theme=game.theme||{};
+  const preset=getThemePreset(game.themePreset);
   const autoFit=theme.autoFit||false;
   const showSB=theme.showScoreboard||false;
   const pointStep=theme.pointStep||100;
@@ -1967,7 +2282,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
     if(autoFit){
       return(<>
         <ImageLightbox src={lightboxSrc} onClose={()=>setLightboxSrc(null)}/>
-        <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1.5vh 1.5vw",background:T.bg,fontFamily:T.font,overflow:"hidden"}}>
+        <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1.5vh 1.5vw",background:preset.page.bg,fontFamily:T.font,overflow:"hidden"}}>
           <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:0}}>
             <div style={{background:"#f0faf6",border:`1.5px solid ${T.success}33`,borderRadius:20,padding:"2.5vh 2.5vw",maxWidth:1200,width:"100%",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",overflow:"hidden",maxHeight:"84vh"}}>
               <div style={{fontSize:"clamp(.7rem,1.6vh,.9rem)",fontWeight:700,textTransform:"uppercase",letterSpacing:2,color:T.success,marginBottom:".3vh",flexShrink:0}}>{cat.name} — Answer</div>
@@ -1987,7 +2302,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
     // Normal scrollable answer page
     return(<>
       <ImageLightbox src={lightboxSrc} onClose={()=>setLightboxSrc(null)}/>
-      <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",alignItems:"center",padding:"2vh 2vw",background:T.bg,fontFamily:T.font,overflowY:"auto"}}>
+      <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",alignItems:"center",padding:"2vh 2vw",background:preset.page.bg,fontFamily:T.font,overflowY:"auto"}}>
         <div style={{background:"#f0faf6",border:`1.5px solid ${T.success}33`,borderRadius:24,padding:"4vh 3vw",maxWidth:1100,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",marginTop:"auto",marginBottom:"2vh"}}>
           <div style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:3,color:T.success,marginBottom:"1vh"}}>{cat.name} — Answer</div>
           {box.answer&&box.answer.trim()&&<div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:aStyle.fontWeight,fontFamily:aStyle.fontFamily,textAlign:aStyle.textAlign}} dangerouslySetInnerHTML={{__html:box.answer}}/>}
@@ -2018,7 +2333,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
     if(autoFit){
       return(<>
         <ImageLightbox src={lightboxSrc} onClose={()=>setLightboxSrc(null)}/>
-        <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1.5vh 1.5vw",background:T.bg,fontFamily:T.font,overflow:"hidden"}}>
+        <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1.5vh 1.5vw",background:preset.page.bg,fontFamily:T.font,overflow:"hidden"}}>
           <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:0}}>
             <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:20,padding:"2vh 2.5vw",maxWidth:1200,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",borderTop:`5px solid ${cat.color}`,display:"flex",flexDirection:"column",alignItems:"center",overflow:"hidden",maxHeight:"82vh"}}>
               <div style={{fontWeight:800,fontSize:"clamp(.8rem,2.2vh,1.3rem)",textTransform:"uppercase",letterSpacing:3,marginBottom:".3vh",color:cat.color,fontFamily:T.font,flexShrink:0}}>{cat.name}</div>
@@ -2049,7 +2364,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
     // Normal mode: scrollable
     return(<>
       <ImageLightbox src={lightboxSrc} onClose={()=>setLightboxSrc(null)}/>
-      <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",alignItems:"center",padding:"2vh 2vw",background:T.bg,fontFamily:T.font,overflowY:"auto"}}>
+      <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",alignItems:"center",padding:"2vh 2vw",background:preset.page.bg,fontFamily:T.font,overflowY:"auto"}}>
         <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:24,padding:"4vh 3vw",maxWidth:1100,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",borderTop:`6px solid ${cat.color}`,marginTop:"auto",marginBottom:"2vh"}}>
           <div style={{fontWeight:800,fontSize:"clamp(1rem,2.8vh,1.6rem)",textTransform:"uppercase",letterSpacing:4,marginBottom:".5vh",color:cat.color,fontFamily:T.font}}>{cat.name}</div>
           <div style={{fontWeight:500,fontSize:"clamp(.9rem,2.2vh,1.3rem)",color:T.textSoft,marginBottom:"3vh"}}>{box.subtitle}</div>
@@ -2079,7 +2394,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
 
   // Grid view
   return(
-    <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1vh 1.5vw",background:T.bg,fontFamily:T.font,overflow:"hidden"}}>
+    <div style={{position:"fixed",inset:0,display:"flex",flexDirection:"column",padding:"1vh 1.5vw",background:preset.page.bg,fontFamily:T.font,overflow:"hidden"}}>
       {/* Background layer */}
       {(()=>{const bg=bgCss(theme);return bg?<div style={{position:"absolute",inset:0,background:bg,opacity:theme.bgOpacity??1,pointerEvents:"none",zIndex:0}}/>:null})()}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,flexWrap:"nowrap",gap:6,marginBottom:"0.6vh",position:"relative",zIndex:1}}>
@@ -2097,13 +2412,17 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           {order.slice(0,total).map((origIdx,pos)=>{
             const box=origIdx<boxes.length?boxes[origIdx]:null;const isV=visited[origIdx];
             const isHover=!isV&&pos===hoveredPos;
-            if(!box)return<div key={pos} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,opacity:.06}}/>;
+            if(!box)return<div key={pos} style={{background:preset.cell.fill,border:`1px solid ${preset.cell.borderColor}`,borderRadius:preset.cell.radius,opacity:.06}}/>;
             const cat=categories[box.catIdx]||{name:"?",color:"#999"};
-            const cellBg=cellBgCss(box,theme,T.surface);
+            const cellBg=cellBgCss(box,theme,preset.cell.fill);
             const borderColor=box.borderOverride||cat.color;
-            const outerBorder=box.borderOverride||theme.cellBorder||T.border;
+            const outerBorder=box.borderOverride||theme.cellBorder||preset.cell.borderColor;
             const cellOpacity=box.cellOpacity!=null?box.cellOpacity:(theme.cellOpacity??1);
             const hasGrad=(box.bgOverrideType==="gradient"||(!box.bgOverride&&theme.cellType==="gradient"));
+            const baseShadow=isV?"none":(theme.cellShadow?"0 4px 12px rgba(0,0,0,.15)":preset.cell.shadow);
+            const hoverShadowVal=preset.cell.hoverShadow(borderColor);
+            const subLabel=`${preset.subtitle.prefix||""}${box.subtitle||""}${preset.subtitle.suffix||""}`;
+            const leftStripeStyle=preset.cell.leftStripe?{borderLeft:`${preset.cell.leftStripe}px solid ${borderColor}`}:{};
             return(<div key={pos}
               onClick={()=>!isV&&openQuestion(origIdx)}
               onMouseEnter={()=>!isV&&setHoveredPos(pos)}
@@ -2111,23 +2430,41 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
               onContextMenu={e=>{e.preventDefault();if(isV)unvisit(origIdx)}}
               style={{
                 background:isV?"#e5e4e0":cellBg,
-                border:`1px solid ${outerBorder}`,
-                borderRadius:10,
-                borderLeft:`4px solid ${borderColor}`,
+                border:`${preset.cell.borderWidth}px ${preset.cell.borderStyle} ${outerBorder}`,
+                borderRadius:preset.cell.radius,
+                ...leftStripeStyle,
                 display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
                 gap:"0.3vh",
                 transition:"transform 180ms cubic-bezier(.2,.7,.2,1), box-shadow 180ms cubic-bezier(.2,.7,.2,1), opacity 180ms",
                 userSelect:"none",overflow:"hidden",
                 opacity:isV?0.2:cellOpacity,
                 cursor:isV?"context-menu":"pointer",
-                transform:isHover?"translateY(-3px) scale(1.03)":"translateY(0) scale(1)",
+                transform:isHover?preset.cell.hoverTransform:"translateY(0) scale(1)",
                 zIndex:isHover?5:1,
-                boxShadow:isHover?`0 10px 28px ${borderColor}44`:((!isV&&theme.cellShadow)?"0 4px 12px rgba(0,0,0,.15)":"none"),
+                boxShadow:isHover?hoverShadowVal:baseShadow,
                 position:"relative",
                 willChange:"transform",
               }}>
-              <span style={{fontWeight:800,fontSize:`clamp(.55rem,${cfv}vh,1.8rem)`,lineHeight:1.1,letterSpacing:-.3,color:isV?"#999":cat.color,textShadow:(!isV&&hasGrad)?"0 1px 2px rgba(255,255,255,.4)":"none",...(isV?strike:{})}}>{cat.name}</span>
-              <span style={{fontWeight:500,fontSize:`clamp(.4rem,${sfv}vh,1.1rem)`,lineHeight:1.1,color:isV?"#bbb":T.textSoft,...(isV?strike:{})}}>{box.subtitle}</span>
+              <span style={{
+                fontFamily:preset.category.fontFamily,
+                fontWeight:preset.category.fontWeight,
+                fontSize:`clamp(.55rem,${cfv}vh,1.8rem)`,
+                lineHeight:1.1,
+                letterSpacing:preset.category.letterSpacing,
+                textTransform:preset.category.textTransform,
+                color:isV?"#999":cat.color,
+                textShadow:(!isV&&hasGrad)?"0 1px 2px rgba(255,255,255,.4)":"none",
+                ...(isV?strike:{})
+              }}>{cat.name}</span>
+              <span style={{
+                fontFamily:preset.subtitle.fontFamily,
+                fontWeight:preset.subtitle.fontWeight,
+                fontStyle:preset.subtitle.fontStyle||"normal",
+                fontSize:`clamp(.4rem,${sfv}vh,1.1rem)`,
+                lineHeight:1.1,
+                color:isV?"#bbb":preset.subtitle.color,
+                ...(isV?strike:{})
+              }}>{subLabel}</span>
             </div>);
           })}
         </div>
@@ -2243,7 +2580,7 @@ export default function App(){
   const[loading,setLoading]=useState(true);
   const[guestMode,setGuestMode]=useState(false); // true if viewing a public game without login
 
-  useEffect(()=>{injectFont(FONTS.map(f=>f.id))},[]); // Load all fonts so previews work
+  useEffect(()=>{injectFont(FONTS.map(f=>f.id));injectAllThemeFonts()},[]); // Load all fonts so previews work
 
   // Check URL for public game link on initial load
   useEffect(()=>{
