@@ -137,7 +137,7 @@ const THEME_PRESETS = {
       fontWeight: 400,
       fontStyle: "italic",
       color: "#6b5d3e",
-      prefix: "№ ",
+      prefix: "",
       suffix: "",
     },
     question: {
@@ -190,8 +190,8 @@ const THEME_PRESETS = {
       fontFamily: "'Space Mono',monospace",
       fontWeight: 400,
       color: "#888888",
-      prefix: "[",
-      suffix: "]",
+      prefix: "",
+      suffix: "",
     },
     question: {
       cardBg: "#ffffff",
@@ -1844,7 +1844,24 @@ function Editor({game,onSave,onPlay,onBack}){
   const[rws,setRws]=useState(game.rows);
   const[timer,setTimer]=useState(game.timerSeconds||0);
   const[theme,setTheme]=useState(game.theme||{bgColor:"",bgImageUrl:"",bgOpacity:1,cellBg:"",cellBorder:""});
-  const[themePreset,setThemePreset]=useState(game.themePreset||DEFAULT_THEME_PRESET);
+  const[themePreset,setThemePresetRaw]=useState(game.themePreset||DEFAULT_THEME_PRESET);
+  // Wrapped setter: if a new theme is picked AND the user has custom background or cell colors,
+  // prompt to reset them so the preset shows through cleanly.
+  const setThemePreset=(id)=>{
+    if(id===themePreset)return;
+    const hasCustomBg=!!(theme.bgColor||theme.bgColor2||theme.bgImageUrl);
+    const hasCustomCells=!!(theme.cellBg||theme.cellBg2||theme.cellBorder||theme.cellShadow);
+    if(hasCustomBg||hasCustomCells){
+      const what=[];
+      if(hasCustomBg)what.push("custom background");
+      if(hasCustomCells)what.push("custom cell colors");
+      const msg=`You have ${what.join(" and ")} set, which will override the new theme's look.\n\nReset them so the "${THEME_PRESETS[id]?.name||id}" theme shows through?`;
+      if(window.confirm(msg)){
+        setTheme(p=>({...p,bgType:"solid",bgColor:"",bgColor2:"",bgImageUrl:"",bgOpacity:1,cellType:"solid",cellBg:"",cellBg2:"",cellBorder:"",cellShadow:false,cellOpacity:1}));
+      }
+    }
+    setThemePresetRaw(id);
+  };
   const[saved,setSaved]=useState(false);
   const[editIdx,setEditIdx]=useState(null); // index of cell being edited
   const[showSettings,setShowSettings]=useState(false);
@@ -2205,6 +2222,50 @@ function Editor({game,onSave,onPlay,onBack}){
 /* ═══════════════════════════════════════
    PLAY MODE
    ═══════════════════════════════════════ */
+
+/* Theme-aware button used everywhere in PlayBoard's top bar + Q/A back buttons.
+   Inherits the preset's font, button radius, letter-spacing, and gives a
+   stronger hover lift (~4px) than the global Btn. */
+function ThemedPill({preset,onClick,accent,ghost,title,style,children}){
+  const[hover,setHover]=useState(false);
+  const accentColor=accent||preset.revealBtn.colorFn("#1c1917");
+  // For Modern: rounded pill; for Editorial/Mono: minimal rounding (matches button radius)
+  const radius=preset.revealBtn.radius;
+  const bgColor=ghost?"transparent":"transparent"; // base = transparent; hover fills
+  const fontFamily=preset.category.fontFamily;
+  // Editorial = serif (no caps), Mono = caps, Modern = sans (no caps).
+  // Buttons read better as caps for Mono/Modern but title-case for Editorial.
+  const isEditorial=preset.id==="editorial";
+  return(
+    <button
+      onClick={onClick}
+      onMouseEnter={()=>setHover(true)}
+      onMouseLeave={()=>setHover(false)}
+      title={title}
+      style={{
+        fontFamily,
+        fontWeight:isEditorial?500:600,
+        fontSize:12,
+        letterSpacing:isEditorial?"0":"0.5px",
+        textTransform:isEditorial?"none":"none",
+        padding:"7px 14px",
+        border:`1.5px solid ${hover?accentColor:accentColor+"55"}`,
+        borderRadius:radius,
+        background:hover?accentColor+"12":bgColor,
+        color:accentColor,
+        cursor:"pointer",
+        lineHeight:1,
+        whiteSpace:"nowrap",
+        flexShrink:0,
+        transition:"transform 140ms cubic-bezier(.2,.7,.2,1), box-shadow 140ms, background 140ms, border-color 140ms",
+        transform:hover?"translateY(-4px)":"translateY(0)",
+        boxShadow:hover?`0 8px 18px ${accentColor}33`:"none",
+        ...style,
+      }}
+    >{children}</button>
+  );
+}
+
 function PlayBoard({game,onEdit,onHome,guestMode}){
   const{categories,boxes,columns,rows,timerSeconds}=game;
   const theme=game.theme||{};
@@ -2294,7 +2355,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
               {hasAud&&!showAudioA&&<button onClick={()=>setShowAudioA(true)} style={{marginTop:"1.5vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:T.success+"14",color:T.success,border:`2px solid ${T.success}44`,borderRadius:50,flexShrink:0}}>▶ Play Answer Audio</button>}
             </div>
           </div>
-          <div style={{display:"flex",justifyContent:"center",gap:12,flexShrink:0,paddingTop:"0.8vh"}}><Btn onClick={goBack} style={{fontSize:14,padding:"10px 28px"}}>← Back to Question</Btn></div>
+          <div style={{display:"flex",justifyContent:"center",gap:12,flexShrink:0,paddingTop:"0.8vh"}}><ThemedPill preset={preset} onClick={goBack} style={{fontSize:14,padding:"10px 24px"}}>← Back to Question</ThemedPill></div>
         </div>
       </>);
     }
@@ -2312,7 +2373,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
           {hasAud&&showAudioA&&<div style={{marginTop:"2vh",display:"flex",justifyContent:"center"}}><audio src={box.localAnswerAudioUrl} controls autoPlay style={{maxWidth:"100%",width:"100%",maxWidth:600}}/></div>}
           {hasAud&&!showAudioA&&<button onClick={()=>setShowAudioA(true)} style={{marginTop:"2vh",padding:"12px 32px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:T.success+"14",color:T.success,border:`2px solid ${T.success}44`,borderRadius:50,transition:"all .15s"}}>▶ Play Answer Audio</button>}
         </div>
-        <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><Btn onClick={goBack} style={{fontSize:15,padding:"12px 32px"}}>← Back to Question</Btn></div>
+        <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><ThemedPill preset={preset} onClick={goBack} style={{fontSize:15,padding:"12px 28px"}}>← Back to Question</ThemedPill></div>
       </div>
     </>);
   }
@@ -2356,7 +2417,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
               </div>}
             </div>
           </div>
-          <div style={{display:"flex",justifyContent:"center",gap:12,flexShrink:0,paddingTop:"0.8vh"}}><Btn onClick={goBack} style={{fontSize:14,padding:"10px 28px"}}>← Back</Btn></div>
+          <div style={{display:"flex",justifyContent:"center",gap:12,flexShrink:0,paddingTop:"0.8vh"}}><ThemedPill preset={preset} onClick={goBack} style={{fontSize:14,padding:"10px 24px"}}>← Back</ThemedPill></div>
         </div>
       </>);
     }
@@ -2386,7 +2447,7 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
             <div style={{fontSize:"clamp(1.2rem,4vh,2.6rem)",lineHeight:1.3,color:T.text,fontWeight:aStyleInline.fontWeight,fontFamily:aStyleInline.fontFamily,textAlign:aStyleInline.textAlign}} dangerouslySetInnerHTML={{__html:box.answer}}/>
           </div>}
         </div>
-        <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><Btn onClick={goBack} style={{fontSize:15,padding:"12px 32px"}}>← Back to Board</Btn></div>
+        <div style={{display:"flex",gap:12,marginBottom:"auto",flexShrink:0}}><ThemedPill preset={preset} onClick={goBack} style={{fontSize:15,padding:"12px 28px"}}>← Back to Board</ThemedPill></div>
         <p style={{color:T.textMuted,fontSize:12,marginTop:8,flexShrink:0}}>Esc = back · Space = reveal · Right-click cells to un-gray · Click images to enlarge</p>
       </div>
     </>);
@@ -2398,12 +2459,27 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
       {/* Background layer */}
       {(()=>{const bg=bgCss(theme);return bg?<div style={{position:"absolute",inset:0,background:bg,opacity:theme.bgOpacity??1,pointerEvents:"none",zIndex:0}}/>:null})()}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,flexWrap:"nowrap",gap:6,marginBottom:"0.6vh",position:"relative",zIndex:1}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}><Btn variant="ghost" onClick={onHome} style={{fontSize:12,padding:"5px 8px"}}>{guestMode?"✕ Exit":"← Home"}</Btn><h1 style={{fontSize:"2.4vh",fontWeight:800,letterSpacing:-.5,color:T.text,margin:0,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{game.name}</h1>{guestMode&&<span style={{fontSize:10,fontWeight:700,color:T.success,background:T.success+"14",padding:"2px 6px",borderRadius:10,letterSpacing:.5,textTransform:"uppercase",flexShrink:0}}>🌐 Shared</span>}</div>
-        <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
-          <Btn onClick={doScramble} style={{borderColor:"#1a8faa",color:"#1a8faa",fontSize:12,padding:"6px 12px"}}>Scramble</Btn>
-          <Btn onClick={reset} style={{borderColor:T.danger,color:T.danger,fontSize:12,padding:"6px 12px"}}>Reset</Btn>
-          <Btn variant="ghost" onClick={toggleFS} style={{fontSize:12,padding:"6px 8px"}}>⛶</Btn>
-          {!guestMode&&<Btn variant="ghost" onClick={onEdit} style={{fontSize:12,padding:"6px 8px"}}>✎</Btn>}
+        <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
+          <ThemedPill preset={preset} onClick={onHome} ghost>{guestMode?"✕ Exit":"← Home"}</ThemedPill>
+          <h1 style={{
+            fontFamily:preset.category.fontFamily,
+            fontSize:"2.4vh",
+            fontWeight:preset.category.fontWeight,
+            letterSpacing:preset.category.letterSpacing,
+            textTransform:preset.category.textTransform,
+            color:T.text,
+            margin:0,
+            whiteSpace:"nowrap",
+            overflow:"hidden",
+            textOverflow:"ellipsis",
+          }}>{game.name}</h1>
+          {guestMode&&<span style={{fontSize:10,fontWeight:700,color:T.success,background:T.success+"14",padding:"2px 6px",borderRadius:10,letterSpacing:.5,textTransform:"uppercase",flexShrink:0}}>🌐 Shared</span>}
+        </div>
+        <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
+          <ThemedPill preset={preset} accent="#1a8faa" onClick={doScramble}>Scramble</ThemedPill>
+          <ThemedPill preset={preset} accent={T.danger} onClick={reset}>Reset</ThemedPill>
+          <ThemedPill preset={preset} onClick={toggleFS} title="Fullscreen" ghost style={{padding:"7px 10px"}}>⛶</ThemedPill>
+          {!guestMode&&<ThemedPill preset={preset} onClick={onEdit} title="Edit" ghost style={{padding:"7px 10px"}}>✎</ThemedPill>}
         </div>
       </div>
       {showSB&&<div style={{flexShrink:0,marginBottom:"0.4vh",position:"relative",zIndex:1}}><Scoreboard scores={scores} setScores={setScores} pointStep={pointStep}/></div>}
