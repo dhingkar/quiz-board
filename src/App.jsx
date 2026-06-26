@@ -71,7 +71,7 @@ const THEME_PRESETS = {
       radius: 10,
       leftStripe: 4,
       shadow: "0 1px 3px rgba(0,0,0,.04)",
-      hoverShadow: (catColor) => `0 10px 28px ${catColor}44`,
+      hoverShadow: (catColor) => `0 12px 32px ${catColor}55, 0 0 0 1px ${catColor}33`,
       hoverTransform: "translateY(-3px) scale(1.03)",
     },
     category: {
@@ -123,7 +123,7 @@ const THEME_PRESETS = {
       radius: 4,
       leftStripe: 0,
       shadow: "1.5px 1.5px 0 #1c1917",
-      hoverShadow: () => "3px 3px 0 #1c1917",
+      hoverShadow: (catColor) => `3px 3px 0 #1c1917, 0 0 24px ${catColor}33`,
       hoverTransform: "translate(-1.5px, -1.5px)",
     },
     category: {
@@ -177,7 +177,7 @@ const THEME_PRESETS = {
       radius: 0,
       leftStripe: 0,
       shadow: "none",
-      hoverShadow: () => "2px 2px 0 #111111",
+      hoverShadow: (catColor) => `3px 3px 0 ${catColor}`,
       hoverTransform: "translate(-2px, -2px)",
     },
     category: {
@@ -1034,8 +1034,8 @@ html,body{height:100%;font-family:'Outfit','Segoe UI',sans-serif;overflow:hidden
 .topbar h1{font-size:2.4vh;font-weight:800;letter-spacing:-.5px;color:#1c1917}
 .gwrap{flex:1;position:relative;min-height:0}
 .grid{position:absolute;inset:0;display:grid}
-.cell{background:#fff;border:1px solid #e6e4df;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3vh;cursor:pointer;transition:transform 180ms cubic-bezier(.2,.7,.2,1),box-shadow 180ms cubic-bezier(.2,.7,.2,1),opacity 180ms;user-select:none;overflow:hidden;position:relative;will-change:transform}
-.cell:hover:not(.v){transform:translateY(-3px) scale(1.03);box-shadow:var(--hover-shadow,0 10px 28px rgba(0,0,0,.18));z-index:5}
+.cell{background:#fff;border:1px solid #e6e4df;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3vh;cursor:pointer;transition:transform 110ms cubic-bezier(.2,.9,.3,1),box-shadow 110ms cubic-bezier(.2,.9,.3,1),background-image 110ms,border-color 110ms,opacity 180ms;user-select:none;overflow:hidden;position:relative;will-change:transform}
+.cell:hover:not(.v){transform:translateY(-3px) scale(1.03);box-shadow:var(--hover-shadow,0 12px 32px rgba(0,0,0,.18));background-image:var(--hover-tint,none);border-color:var(--hover-border,inherit);z-index:5}
 .cell.v{opacity:.2;background:#e5e4e0;cursor:default}.cell.v span{text-decoration:line-through;text-decoration-color:#c43040;text-decoration-thickness:2.5px}
 .pill{font-family:inherit;font-weight:600;font-size:12px;cursor:pointer;border-radius:50px;transition:all .15s;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1.5px solid #e6e4df;background:#fff;color:#1c1917;padding:6px 12px;line-height:1}
 .qpage{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;padding:1.5vh 1.5vw;background:#f4f3f0;overflow:hidden}
@@ -1173,11 +1173,18 @@ if(!visited[idx]){
   d.style.border="1px solid "+outerBorder;
   d.style.opacity=cellOpacity;
   if(THEME.cellShadow)d.style.boxShadow="0 4px 12px rgba(0,0,0,.15)";
-  d.style.setProperty("--hover-shadow","0 10px 28px "+borderColor+"44");
+  d.style.setProperty("--hover-shadow","0 12px 32px "+borderColor+"55, 0 0 0 1px "+borderColor+"33");
+  d.style.setProperty("--hover-tint","linear-gradient("+borderColor+"1f,"+borderColor+"1f)");
+  d.style.setProperty("--hover-border",borderColor);
 }
 d.style.borderLeft=PRESET_LEFT_STRIPE>0?(PRESET_LEFT_STRIPE+"px solid "+borderColor):"";
-const c=document.createElement("span");c.className="cat";c.style.cssText="font-weight:800;font-size:clamp(0.55rem,"+cfv+"vh,1.8rem);line-height:1.1;letter-spacing:-0.3px;color:"+(visited[idx]?"#999":cat.color);c.textContent=cat.name;
-const s=document.createElement("span");s.className="sub";s.style.cssText="font-weight:500;font-size:clamp(0.4rem,"+sfv+"vh,1.1rem);line-height:1.1;color:"+(visited[idx]?"#bbb":"#78716c");s.textContent=PRESET_SUB_PREFIX+(box.subtitle||"")+PRESET_SUB_SUFFIX;
+const ctxt=(THEME.cellText||{});
+const _catScale=typeof ctxt.catScale==="number"?ctxt.catScale:1;
+const _subScale=typeof ctxt.subScale==="number"?ctxt.subScale:1;
+const _catColor=ctxt.catColor||(visited[idx]?"#999":cat.color);
+const _subColor=ctxt.subColor||(visited[idx]?"#bbb":"#78716c");
+const c=document.createElement("span");c.className="cat";c.style.cssText="font-weight:800;font-size:clamp("+(0.55*_catScale)+"rem,"+(cfv*_catScale)+"vh,"+(1.8*_catScale)+"rem);line-height:1.1;letter-spacing:-0.3px;color:"+_catColor;c.textContent=cat.name;
+const s=document.createElement("span");s.className="sub";s.style.cssText="font-weight:500;font-size:clamp("+(0.4*_subScale)+"rem,"+(sfv*_subScale)+"vh,"+(1.1*_subScale)+"rem);line-height:1.1;color:"+_subColor;s.textContent=PRESET_SUB_PREFIX+(box.subtitle||"")+PRESET_SUB_SUFFIX;
 d.appendChild(c);d.appendChild(s);
 if(!visited[idx])d.addEventListener("click",()=>showQ(idx));
 d.addEventListener("contextmenu",e=>{e.preventDefault();if(visited[idx]){delete visited[idx];buildGrid()}});
@@ -1652,6 +1659,53 @@ function ThemePanel({theme,updateTheme,themePreset,setThemePreset}){
         Themes set the visual defaults. Your custom colors / fonts below still override them per-cell or per-game.
       </p>
     </div>}
+
+    {/* ─── CELL TEXT SIZE + COLOR (game-wide overrides) ─── */}
+    <div style={{marginBottom:20,paddingBottom:16,borderBottom:`1px solid ${T.borderLight}`}}>
+      <div style={{...lbl,marginBottom:10}}>Cell text</div>
+      {(() => {
+        const cellText=theme.cellText||{};
+        const catScale=typeof cellText.catScale==="number"?cellText.catScale:1;
+        const subScale=typeof cellText.subScale==="number"?cellText.subScale:1;
+        const catColor=cellText.catColor||"";
+        const subColor=cellText.subColor||"";
+        const updateCellText=(k,v)=>{
+          const next={...(theme.cellText||{}),[k]:v};
+          updateTheme("cellText",next);
+        };
+        const sliderRow=(label,value,onChange,min,max,step,resetTo)=>(
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+            <span style={{...subLbl,width:90}}>{label}</span>
+            <input type="range" min={min} max={max} step={step} value={value} onChange={e=>onChange(parseFloat(e.target.value))} style={{flex:1,accentColor:T.text}}/>
+            <span style={{fontSize:11,color:T.textSoft,fontVariantNumeric:"tabular-nums",width:50,textAlign:"right"}}>{value.toFixed(2)}×</span>
+            {value!==resetTo&&<button onClick={()=>onChange(resetTo)} title="Reset" style={{background:"none",border:"none",fontSize:10,color:T.textMuted,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0}}>reset</button>}
+          </div>
+        );
+        const colorRow=(label,value,onChange,placeholder)=>(
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+            <span style={{...subLbl,width:90}}>{label}</span>
+            <input type="color" value={value||"#1c1917"} onChange={e=>onChange(e.target.value)} style={{width:36,height:24,border:`1px solid ${T.borderLight}`,borderRadius:4,cursor:"pointer",padding:0,background:"none"}}/>
+            <input type="text" value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{flex:1,padding:"5px 8px",border:`1.5px solid ${T.borderLight}`,borderRadius:6,fontSize:11,outline:"none",fontFamily:T.fontMono,color:T.text,background:T.surface}}/>
+            {value&&<button onClick={()=>onChange("")} title="Reset to category color" style={{background:"none",border:"none",fontSize:10,color:T.textMuted,cursor:"pointer",fontFamily:T.font,textDecoration:"underline",padding:0}}>reset</button>}
+          </div>
+        );
+        return(<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:18}}>
+          <div>
+            <div style={{...subLbl,width:"auto",marginBottom:6,fontWeight:700,fontSize:10,textTransform:"uppercase",letterSpacing:1}}>Category (the big letter / name)</div>
+            {sliderRow("Size",catScale,v=>updateCellText("catScale",v),0.6,2.4,0.05,1)}
+            {colorRow("Color",catColor,v=>updateCellText("catColor",v),"per-category default")}
+          </div>
+          <div>
+            <div style={{...subLbl,width:"auto",marginBottom:6,fontWeight:700,fontSize:10,textTransform:"uppercase",letterSpacing:1}}>Subtitle (the smaller line)</div>
+            {sliderRow("Size",subScale,v=>updateCellText("subScale",v),0.6,2.4,0.05,1)}
+            {colorRow("Color",subColor,v=>updateCellText("subColor",v),"theme default")}
+          </div>
+        </div>);
+      })()}
+      <p style={{fontSize:10,color:T.textMuted,marginTop:6,lineHeight:1.4}}>
+        Adjusts text size and color across every cell. Category color falls back to each category's color if unset; subtitle falls back to the theme default.
+      </p>
+    </div>
 
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:20}}>
 
@@ -2228,38 +2282,45 @@ function Editor({game,onSave,onPlay,onBack}){
    stronger hover lift (~4px) than the global Btn. */
 function ThemedPill({preset,onClick,accent,ghost,title,style,children}){
   const[hover,setHover]=useState(false);
-  const accentColor=accent||preset.revealBtn.colorFn("#1c1917");
-  // For Modern: rounded pill; for Editorial/Mono: minimal rounding (matches button radius)
+  const[pressed,setPressed]=useState(false);
+  const accentColor=accent||(preset.id==="editorial"?"#1c1917":preset.id==="mono"?"#111111":"#1c1917");
   const radius=preset.revealBtn.radius;
-  const bgColor=ghost?"transparent":"transparent"; // base = transparent; hover fills
+  // Theme-appropriate resting surface — must be visible against any chrome behind it.
+  const restingBg=preset.id==="editorial"?"#faf6ec":preset.id==="mono"?"#ffffff":"#ffffff";
+  const restingBorder=preset.id==="editorial"?"#1c1917":preset.id==="mono"?"#111111":accentColor+"55";
+  const restingBorderWidth=preset.id==="editorial"?0.5:preset.id==="mono"?1:1.5;
   const fontFamily=preset.category.fontFamily;
-  // Editorial = serif (no caps), Mono = caps, Modern = sans (no caps).
-  // Buttons read better as caps for Mono/Modern but title-case for Editorial.
   const isEditorial=preset.id==="editorial";
+  // Resting shadow: editorial gets a tiny offset, mono gets a hard offset, modern gets a soft glow.
+  const restingShadow=preset.id==="editorial"?"1px 1px 0 #1c1917":preset.id==="mono"?"2px 2px 0 #111111":"0 1px 3px rgba(0,0,0,.06)";
+  const hoverShadow=preset.id==="editorial"?`2px 2px 0 #1c1917, 0 4px 14px ${accentColor}33`:preset.id==="mono"?`3px 3px 0 #111111, 0 4px 12px ${accentColor}22`:`0 6px 16px ${accentColor}33`;
+  // Snappier transform: lift on hover, drop slightly on press for tactile feel.
+  const transform=pressed?"translateY(0px) scale(0.97)":(hover?"translateY(-3px) scale(1.02)":"translateY(0) scale(1)");
   return(
     <button
       onClick={onClick}
       onMouseEnter={()=>setHover(true)}
-      onMouseLeave={()=>setHover(false)}
+      onMouseLeave={()=>{setHover(false);setPressed(false)}}
+      onMouseDown={()=>setPressed(true)}
+      onMouseUp={()=>setPressed(false)}
       title={title}
       style={{
         fontFamily,
         fontWeight:isEditorial?500:600,
         fontSize:12,
         letterSpacing:isEditorial?"0":"0.5px",
-        textTransform:isEditorial?"none":"none",
         padding:"7px 14px",
-        border:`1.5px solid ${hover?accentColor:accentColor+"55"}`,
+        border:`${restingBorderWidth}px solid ${hover?accentColor:restingBorder}`,
         borderRadius:radius,
-        background:hover?accentColor+"12":bgColor,
+        background:hover?accentColor+"14":restingBg,
         color:accentColor,
         cursor:"pointer",
         lineHeight:1,
         whiteSpace:"nowrap",
         flexShrink:0,
-        transition:"transform 140ms cubic-bezier(.2,.7,.2,1), box-shadow 140ms, background 140ms, border-color 140ms",
-        transform:hover?"translateY(-4px)":"translateY(0)",
-        boxShadow:hover?`0 8px 18px ${accentColor}33`:"none",
+        transition:"transform 110ms cubic-bezier(.2,.9,.3,1), box-shadow 110ms, background 110ms, border-color 110ms",
+        transform,
+        boxShadow:hover?hoverShadow:restingShadow,
         ...style,
       }}
     >{children}</button>
@@ -2286,6 +2347,12 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   const[showAudioA,setShowAudioA]=useState(false);
 
   const cfv=Math.min(2.8,15/rows),sfv=Math.min(2,10/rows);
+  // Cell text overrides from theme (game-wide). 1.0 = no scaling. Empty color = use category/preset default.
+  const cellText=theme.cellText||{};
+  const ctCatScale=typeof cellText.catScale==="number"?cellText.catScale:1;
+  const ctSubScale=typeof cellText.subScale==="number"?cellText.subScale:1;
+  const ctCatColor=cellText.catColor||"";
+  const ctSubColor=cellText.subColor||"";
   const total=columns*rows;
   const strike={textDecoration:"line-through",textDecorationColor:"#c43040",textDecorationThickness:"2.5px"};
 
@@ -2505,13 +2572,15 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
               onMouseLeave={()=>setHoveredPos(p=>p===pos?null:p)}
               onContextMenu={e=>{e.preventDefault();if(isV)unvisit(origIdx)}}
               style={{
-                background:isV?"#e5e4e0":cellBg,
-                border:`${preset.cell.borderWidth}px ${preset.cell.borderStyle} ${outerBorder}`,
+                // Hover gets a category-colored tint layered over the cell's base fill.
+                // We use background-image (gradient) so it composes on top of any solid/gradient cellBg.
+                background:isV?"#e5e4e0":(isHover?`linear-gradient(${borderColor}1f,${borderColor}1f), ${cellBg}`:cellBg),
+                border:`${preset.cell.borderWidth}px ${preset.cell.borderStyle} ${isHover?borderColor:outerBorder}`,
                 borderRadius:preset.cell.radius,
                 ...leftStripeStyle,
                 display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
                 gap:"0.3vh",
-                transition:"transform 180ms cubic-bezier(.2,.7,.2,1), box-shadow 180ms cubic-bezier(.2,.7,.2,1), opacity 180ms",
+                transition:"transform 110ms cubic-bezier(.2,.9,.3,1), box-shadow 110ms cubic-bezier(.2,.9,.3,1), background 110ms, border-color 110ms, opacity 180ms",
                 userSelect:"none",overflow:"hidden",
                 opacity:isV?0.2:cellOpacity,
                 cursor:isV?"context-menu":"pointer",
@@ -2524,11 +2593,11 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
               <span style={{
                 fontFamily:preset.category.fontFamily,
                 fontWeight:preset.category.fontWeight,
-                fontSize:`clamp(.55rem,${cfv}vh,1.8rem)`,
+                fontSize:`clamp(${.55*ctCatScale}rem,${cfv*ctCatScale}vh,${1.8*ctCatScale}rem)`,
                 lineHeight:1.1,
                 letterSpacing:preset.category.letterSpacing,
                 textTransform:preset.category.textTransform,
-                color:isV?"#999":cat.color,
+                color:isV?"#999":(ctCatColor||cat.color),
                 textShadow:(!isV&&hasGrad)?"0 1px 2px rgba(255,255,255,.4)":"none",
                 ...(isV?strike:{})
               }}>{cat.name}</span>
@@ -2536,9 +2605,9 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
                 fontFamily:preset.subtitle.fontFamily,
                 fontWeight:preset.subtitle.fontWeight,
                 fontStyle:preset.subtitle.fontStyle||"normal",
-                fontSize:`clamp(.4rem,${sfv}vh,1.1rem)`,
+                fontSize:`clamp(${.4*ctSubScale}rem,${sfv*ctSubScale}vh,${1.1*ctSubScale}rem)`,
                 lineHeight:1.1,
-                color:isV?"#bbb":preset.subtitle.color,
+                color:isV?"#bbb":(ctSubColor||preset.subtitle.color),
                 ...(isV?strike:{})
               }}>{subLabel}</span>
             </div>);
