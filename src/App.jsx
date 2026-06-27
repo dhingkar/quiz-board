@@ -20,6 +20,7 @@ const T = {
 // Each entry: family (CSS), display name, Google Fonts spec, available weights
 const FONTS = [
   { id: "outfit",     name: "Outfit (default)",  family: "'Outfit',sans-serif",                       google: "Outfit:wght@300;400;500;600;700;800;900",        weights: [300,400,500,600,700,800,900] },
+  { id: "atkinson",   name: "Atkinson Hyperlegible", family: "'Atkinson Hyperlegible',sans-serif",    google: "Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700", weights: [400,700] },
   { id: "inter",      name: "Inter",             family: "'Inter',sans-serif",                        google: "Inter:wght@300;400;500;600;700;800;900",         weights: [300,400,500,600,700,800,900] },
   { id: "playfair",   name: "Playfair Display",  family: "'Playfair Display',serif",                  google: "Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700", weights: [400,500,600,700,800,900] },
   { id: "lora",       name: "Lora (serif)",      family: "'Lora',serif",                              google: "Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,700", weights: [400,500,600,700] },
@@ -1190,6 +1191,10 @@ if(!visited[idx])d.addEventListener("click",()=>showQ(idx));
 d.addEventListener("contextmenu",e=>{e.preventDefault();if(visited[idx]){delete visited[idx];buildGrid()}});
 grid.appendChild(d)})}
 function showQ(idx){visited[idx]=true;curIdx=idx;onAnswerPage=false;const box=boxes[idx],cat=cats[box.catIdx]||{name:"?",color:"#999"};
+// Reset visibility from any prior video session
+const _qFit=document.getElementById("qFit");if(_qFit)_qFit.style.display="";
+const _qMedia=document.getElementById("qMedia");if(_qMedia)_qMedia.style.display="";
+const _restoreBtn=document.getElementById("restoreQTextBtn");if(_restoreBtn)_restoreBtn.remove();
 document.getElementById("qCat").textContent=cat.name;document.getElementById("qCat").style.color=cat.color;
 document.getElementById("qSub").textContent=PRESET_SUB_PREFIX+(box.subtitle||"")+PRESET_SUB_SUFFIX;
 const qTextEl=document.getElementById("qText");qTextEl.innerHTML=box.question||"";applyStyle(qTextEl,box,"question");
@@ -1225,9 +1230,28 @@ function playLocalVideo(){
   lvb.innerHTML="";
   const v=document.createElement("video");
   v.src=box.localVideoUrl;v.controls=true;v.autoplay=true;
-  v.style.cssText="max-width:100%;max-height:45vh;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1)";
+  v.style.cssText="max-width:100%;max-height:70vh;border-radius:12px;box-shadow:0 4px 20px rgba(0,0,0,.1)";
   lvb.appendChild(v);
   lvb.classList.remove("hidden");
+  // Hide question text + image so the video has clean space, add a restore button
+  const qFit=document.getElementById("qFit");if(qFit)qFit.style.display="none";
+  const qMedia=document.getElementById("qMedia");if(qMedia)qMedia.style.display="none";
+  // Show the "Show question text" button (created if needed)
+  let restoreBtn=document.getElementById("restoreQTextBtn");
+  if(!restoreBtn){
+    restoreBtn=document.createElement("button");
+    restoreBtn.id="restoreQTextBtn";
+    restoreBtn.textContent="↺ Show question text";
+    restoreBtn.style.cssText="margin-top:1vh;padding:8px 22px;font-size:clamp(.75rem,1.6vh,.95rem);font-weight:600;font-family:inherit;cursor:pointer;background:transparent;color:#78716c;border:1.5px solid #eeece8;border-radius:50px;align-self:center;flex-shrink:0";
+    restoreBtn.onclick=function(){
+      stopLocalVideo();
+      if(qFit)qFit.style.display="";
+      if(qMedia)qMedia.style.display="";
+      pvb.classList.remove("hidden");
+      restoreBtn.remove();
+    };
+    lvb.parentNode.insertBefore(restoreBtn,lvb.nextSibling);
+  }
 }
 function playAVideo(){
   if(curIdx==null)return;
@@ -1296,8 +1320,17 @@ document.getElementById("qPage").classList.add("hidden");document.getElementById
 onAnswerPage=true;setTimeout(()=>{fitText("aFit2","aText2",80,14)},50);history.pushState({v:"a"},"")
 }else{document.getElementById("revealBtn").classList.add("hidden");document.getElementById("answerBox").classList.remove("hidden");
 setTimeout(()=>{fitText("aFit","aText",60,12)},50)}}
-function backToQ(){stopLocalVideo();onAnswerPage=false;document.getElementById("answerPage").classList.add("hidden");document.getElementById("qPage").classList.remove("hidden")}
-function goBack(){clearInterval(timerInterval);stopLocalVideo();curIdx=null;onAnswerPage=false;document.getElementById("qPage").classList.add("hidden");document.getElementById("answerPage").classList.add("hidden");document.getElementById("gridPage").classList.remove("hidden");buildGrid()}
+function backToQ(){stopLocalVideo();onAnswerPage=false;
+  const _qFit=document.getElementById("qFit");if(_qFit)_qFit.style.display="";
+  const _qMedia=document.getElementById("qMedia");if(_qMedia)_qMedia.style.display="";
+  const _restoreBtn=document.getElementById("restoreQTextBtn");if(_restoreBtn)_restoreBtn.remove();
+  const _pvb=document.getElementById("playVideoBtn");if(_pvb&&curIdx!=null&&boxes[curIdx]&&boxes[curIdx].localVideoUrl)_pvb.classList.remove("hidden");
+  document.getElementById("answerPage").classList.add("hidden");document.getElementById("qPage").classList.remove("hidden")}
+function goBack(){clearInterval(timerInterval);stopLocalVideo();
+  const _qFit=document.getElementById("qFit");if(_qFit)_qFit.style.display="";
+  const _qMedia=document.getElementById("qMedia");if(_qMedia)_qMedia.style.display="";
+  const _restoreBtn=document.getElementById("restoreQTextBtn");if(_restoreBtn)_restoreBtn.remove();
+  curIdx=null;onAnswerPage=false;document.getElementById("qPage").classList.add("hidden");document.getElementById("answerPage").classList.add("hidden");document.getElementById("gridPage").classList.remove("hidden");buildGrid()}
 function scramble(){for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[order[i],order[j]]=[order[j],order[i]]}buildGrid()}
 function resetBoard(){visited={};order=boxes.map((_,i)=>i);buildGrid()}
 function toggleFS(){if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen()}
@@ -1325,6 +1358,16 @@ document.addEventListener("keydown",e=>{
   }
 });
 buildGrid();
+// Preload all images so opening a question feels instant.
+// For self-contained exports (base64 data URLs), this is fast and free; for URL-based, it warms the cache.
+(function preloadMedia(){
+  const imgs=new Set();
+  for(const b of G.boxes||[]){
+    if(b.imageUrl)imgs.add(b.imageUrl);
+    if(b.answerImageUrl)imgs.add(b.answerImageUrl);
+  }
+  imgs.forEach(u=>{const i=new Image();i.src=u});
+})();
 <\/script></body></html>`;
   const blob=new Blob([html],{type:"text/html"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);
   a.download=(game.name||"quiz-board").replace(/[^a-zA-Z0-9-_ ]/g,"").replace(/\s+/g,"-").toLowerCase()+".html";a.click();URL.revokeObjectURL(a.href);
@@ -1981,6 +2024,12 @@ function Editor({game,onSave,onPlay,onBack}){
 
   const editBox=editIdx!==null?grid[editIdx]:null;
   const editCat=editBox?cats[editBox.catIdx]||cats[0]:null;
+  // Whether the Media section is expanded in the cell editor.
+  // Default: open if any media is already set on this cell; otherwise collapsed.
+  const hasAnyMedia=editBox&&(editBox.imageUrl||editBox.videoUrl||editBox.localVideoUrl||editBox.localQuestionAudioUrl||editBox.answerImageUrl||editBox.localAnswerVideoUrl||editBox.localAnswerAudioUrl);
+  const[mediaOpen,setMediaOpen]=useState(false);
+  // When opening a different cell, re-evaluate default open state
+  useEffect(()=>{setMediaOpen(!!hasAnyMedia)},[editIdx]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const inp={padding:"8px 12px",border:`1.5px solid ${T.borderLight}`,borderRadius:8,fontSize:13,outline:"none",fontFamily:T.font,color:T.text,background:T.surfaceAlt};
 
@@ -2142,7 +2191,18 @@ function Editor({game,onSave,onPlay,onBack}){
           <RichInput value={editBox.answer||""} onChange={v=>updateCell(editIdx,"answer",v)} placeholder="Answer (revealed on click)" style={{minHeight:50,borderColor:T.success+"44",background:"#f0faf6"}}/>
         </div>
 
-        {/* Media */}
+        {/* Media (collapsible) */}
+        <div style={{marginTop:6,paddingTop:10,borderTop:`1px solid ${T.borderLight}`}}>
+          <button onClick={()=>setMediaOpen(p=>!p)} style={{background:"none",border:"none",padding:"4px 0",cursor:"pointer",fontFamily:T.font,fontSize:12,fontWeight:700,color:T.textSoft,textTransform:"uppercase",letterSpacing:1,display:"flex",alignItems:"center",gap:6,width:"100%"}}>
+            <span style={{display:"inline-block",width:10,transition:"transform .15s",transform:mediaOpen?"rotate(90deg)":"rotate(0deg)"}}>▸</span>
+            <span>Media — images, video, audio</span>
+            {hasAnyMedia&&<span style={{fontSize:10,color:T.success,fontWeight:600,marginLeft:6,textTransform:"none",letterSpacing:0}}>● attached</span>}
+            <span style={{flex:1}}/>
+            <span style={{fontSize:10,fontWeight:500,color:T.textMuted,textTransform:"none",letterSpacing:0}}>{mediaOpen?"hide":"show"}</span>
+          </button>
+        </div>
+
+        {mediaOpen&&<>
         <ImageUpload value={editBox.imageUrl||""} onChange={v=>updateCell(editIdx,"imageUrl",v)} label="🖼 Question Image" color="#1a8faa"/>
 
         <div>
@@ -2160,6 +2220,7 @@ function Editor({game,onSave,onPlay,onBack}){
         <VideoUpload value={editBox.localAnswerVideoUrl||""} onChange={v=>updateCell(editIdx,"localAnswerVideoUrl",v)} label="🎬 Answer Video (offline-ready)" color={T.success} borderColor={T.success+"44"}/>
 
         <AudioUpload value={editBox.localAnswerAudioUrl||""} onChange={v=>updateCell(editIdx,"localAnswerAudioUrl",v)} label="🎵 Answer Audio (offline-ready)" color={T.success} borderColor={T.success+"44"}/>
+        </>}
 
         {/* Per-cell color overrides */}
         <div style={{marginTop:6,paddingTop:10,borderTop:`1px solid ${T.borderLight}`}}>
@@ -2361,6 +2422,28 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
   const doScramble=useCallback(()=>setOrder(p=>shuffle(p)),[]);
   const toggleFS=()=>{if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen()};
 
+  // ─── PRELOAD IMAGES + VIDEO METADATA ───
+  // Kick off background fetches so opening a question feels instant instead of waiting on Firebase Storage.
+  useEffect(()=>{
+    const imgUrls=new Set();
+    const vidUrls=new Set();
+    const audUrls=new Set();
+    for(const b of boxes){
+      if(b.imageUrl)imgUrls.add(b.imageUrl);
+      if(b.answerImageUrl)imgUrls.add(b.answerImageUrl);
+      if(b.localVideoUrl)vidUrls.add(b.localVideoUrl);
+      if(b.localAnswerVideoUrl)vidUrls.add(b.localAnswerVideoUrl);
+      if(b.localQuestionAudioUrl)audUrls.add(b.localQuestionAudioUrl);
+      if(b.localAnswerAudioUrl)audUrls.add(b.localAnswerAudioUrl);
+    }
+    // Image preload — fastest, triggers browser cache
+    imgUrls.forEach(url=>{const i=new Image();i.src=url});
+    // Video preload — metadata only, so we don't burn bandwidth playing every video
+    vidUrls.forEach(url=>{const v=document.createElement("video");v.preload="metadata";v.src=url});
+    // Audio preload — same pattern
+    audUrls.forEach(url=>{const a=document.createElement("audio");a.preload="metadata";a.src=url});
+  },[boxes]);
+
   // Push browser history entries so back-swipe navigates within the app, not away
   useEffect(()=>{
     const onPop=()=>{
@@ -2466,12 +2549,13 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
             <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:20,padding:"2vh 2.5vw",maxWidth:1200,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",borderTop:`5px solid ${cat.color}`,display:"flex",flexDirection:"column",alignItems:"center",overflow:"hidden",maxHeight:"82vh"}}>
               <div style={{fontWeight:800,fontSize:"clamp(.8rem,2.2vh,1.3rem)",textTransform:"uppercase",letterSpacing:3,marginBottom:".3vh",color:cat.color,fontFamily:T.font,flexShrink:0}}>{cat.name}</div>
               <div style={{fontWeight:500,fontSize:"clamp(.7rem,1.8vh,1rem)",color:T.textSoft,marginBottom:"1.5vh",flexShrink:0}}>{box.subtitle}</div>
-              <AutoFitText html={box.question} baseSizePx={80} minSizePx={14} fontFamily={qStyle.fontFamily} fontWeight={qStyle.fontWeight} textAlign={qStyle.textAlign} style={{flex:"0 1 auto",maxHeight:"40vh"}}/>
-              {(box.imageUrl||ytId(box.videoUrl)||(box.localVideoUrl&&showVideoQ))&&<div style={{flexShrink:0,maxHeight:"30vh",overflow:"hidden",marginTop:"1.5vh",width:"100%",display:"flex",justifyContent:"center"}}>
-                {box.imageUrl&&<img src={box.imageUrl} alt="" onClick={()=>setLightboxSrc(box.imageUrl)} style={{maxWidth:"100%",maxHeight:"20vh",borderRadius:10,objectFit:"contain",cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/>}
-                {ytId(box.videoUrl)&&<div style={{width:"100%",maxWidth:400,aspectRatio:"16/9",borderRadius:10,overflow:"hidden"}}><iframe src={`https://www.youtube.com/embed/${ytId(box.videoUrl)}`} title="Video" style={{width:"100%",height:"100%",border:"none"}} allowFullScreen/></div>}
-                {box.localVideoUrl&&showVideoQ&&<video src={box.localVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"30vh",borderRadius:10}}/>}
+              {!showVideoQ&&<AutoFitText html={box.question} baseSizePx={80} minSizePx={14} fontFamily={qStyle.fontFamily} fontWeight={qStyle.fontWeight} textAlign={qStyle.textAlign} style={{flex:"0 1 auto",maxHeight:"40vh"}}/>}
+              {(box.imageUrl||ytId(box.videoUrl)||(box.localVideoUrl&&showVideoQ))&&<div style={{flexShrink:0,maxHeight:showVideoQ?"65vh":"30vh",overflow:"hidden",marginTop:"1.5vh",width:"100%",display:"flex",justifyContent:"center"}}>
+                {box.imageUrl&&!showVideoQ&&<img src={box.imageUrl} alt="" onClick={()=>setLightboxSrc(box.imageUrl)} style={{maxWidth:"100%",maxHeight:"20vh",borderRadius:10,objectFit:"contain",cursor:"zoom-in"}} onError={e=>{e.target.style.display="none"}}/>}
+                {ytId(box.videoUrl)&&!showVideoQ&&<div style={{width:"100%",maxWidth:400,aspectRatio:"16/9",borderRadius:10,overflow:"hidden"}}><iframe src={`https://www.youtube.com/embed/${ytId(box.videoUrl)}`} title="Video" style={{width:"100%",height:"100%",border:"none"}} allowFullScreen/></div>}
+                {box.localVideoUrl&&showVideoQ&&<video src={box.localVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"65vh",borderRadius:10}}/>}
               </div>}
+              {box.localVideoUrl&&showVideoQ&&<button onClick={()=>setShowVideoQ(false)} style={{marginTop:"1vh",padding:"8px 20px",fontSize:"clamp(.7rem,1.6vh,.95rem)",fontWeight:600,fontFamily:T.font,cursor:"pointer",background:"transparent",color:T.textSoft,border:`1.5px solid ${T.borderLight}`,borderRadius:50,flexShrink:0}}>↺ Show question text</button>}
               {box.localVideoUrl&&!showVideoQ&&<button onClick={()=>setShowVideoQ(true)} style={{marginTop:"1.2vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,flexShrink:0}}>▶ Play Video</button>}
               {hasQAud&&showAudioQ&&<audio src={box.localQuestionAudioUrl} controls autoPlay style={{maxWidth:"100%",marginTop:"1.2vh",flexShrink:0}}/>}
               {hasQAud&&!showAudioQ&&<button onClick={()=>setShowAudioQ(true)} style={{marginTop:"1.2vh",padding:"10px 28px",fontSize:"clamp(.8rem,1.8vh,1.1rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,flexShrink:0}}>▶ Play Audio</button>}
@@ -2496,11 +2580,12 @@ function PlayBoard({game,onEdit,onHome,guestMode}){
         <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:24,padding:"4vh 3vw",maxWidth:1100,width:"100%",textAlign:"center",boxShadow:"0 12px 60px rgba(0,0,0,.06)",borderTop:`6px solid ${cat.color}`,marginTop:"auto",marginBottom:"2vh"}}>
           <div style={{fontWeight:800,fontSize:"clamp(1rem,2.8vh,1.6rem)",textTransform:"uppercase",letterSpacing:4,marginBottom:".5vh",color:cat.color,fontFamily:T.font}}>{cat.name}</div>
           <div style={{fontWeight:500,fontSize:"clamp(.9rem,2.2vh,1.3rem)",color:T.textSoft,marginBottom:"3vh"}}>{box.subtitle}</div>
-          <div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:qStyle.fontWeight,letterSpacing:qStyle.fontWeight<500?0:-.3,fontFamily:qStyle.fontFamily,textAlign:qStyle.textAlign}} dangerouslySetInnerHTML={{__html:box.question}}/>
-          <MediaPreview imageUrl={box.imageUrl} videoUrl={box.videoUrl} maxHeight="35vh" onImageClick={setLightboxSrc}/>
+          {!showVideoQ&&<div style={{fontSize:"clamp(1.4rem,5vh,3.2rem)",lineHeight:1.3,color:T.text,fontWeight:qStyle.fontWeight,letterSpacing:qStyle.fontWeight<500?0:-.3,fontFamily:qStyle.fontFamily,textAlign:qStyle.textAlign}} dangerouslySetInnerHTML={{__html:box.question}}/>}
+          {!showVideoQ&&<MediaPreview imageUrl={box.imageUrl} videoUrl={box.videoUrl} maxHeight="35vh" onImageClick={setLightboxSrc}/>}
           {box.localVideoUrl&&showVideoQ&&<div style={{marginTop:"2vh",display:"flex",justifyContent:"center"}}>
-            <video src={box.localVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"45vh",borderRadius:12,boxShadow:"0 4px 20px rgba(0,0,0,.1)"}}/>
+            <video src={box.localVideoUrl} controls autoPlay style={{maxWidth:"100%",maxHeight:"70vh",borderRadius:12,boxShadow:"0 4px 20px rgba(0,0,0,.1)"}}/>
           </div>}
+          {box.localVideoUrl&&showVideoQ&&<button onClick={()=>setShowVideoQ(false)} style={{marginTop:"1.5vh",padding:"8px 22px",fontSize:"clamp(.8rem,1.6vh,1rem)",fontWeight:600,fontFamily:T.font,cursor:"pointer",background:"transparent",color:T.textSoft,border:`1.5px solid ${T.borderLight}`,borderRadius:50,transition:"all .15s"}}>↺ Show question text</button>}
           {box.localVideoUrl&&!showVideoQ&&<button onClick={()=>setShowVideoQ(true)} style={{marginTop:"2vh",padding:"12px 32px",fontSize:"clamp(.9rem,2vh,1.2rem)",fontWeight:700,fontFamily:T.font,cursor:"pointer",background:"#6c4dcf14",color:"#6c4dcf",border:"2px solid #6c4dcf44",borderRadius:50,transition:"all .15s"}}>▶ Play Video</button>}
           {hasQAud&&showAudioQ&&<div style={{marginTop:"2vh",display:"flex",justifyContent:"center"}}>
             <audio src={box.localQuestionAudioUrl} controls autoPlay style={{width:"100%",maxWidth:600}}/>
